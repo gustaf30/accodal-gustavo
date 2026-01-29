@@ -1,0 +1,284 @@
+{
+  "name": "Data Aggregation",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "aggregate",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [250, 300],
+      "webhookId": "data-aggregation"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse incoming results from parallel tasks\nconst item = $input.item;\nconst data = item.json.body || item.json;\n\nreturn {\n  json: {\n    aggregation_id: data.aggregation_id || 'agg_' + Date.now(),\n    results: data.results || [],\n    user_id: data.user_id,\n    aggregation_type: data.type || 'merge',\n    options: data.options || {}\n  }\n};"
+      },
+      "id": "parse-input",
+      "name": "Parse Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [470, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Merge results from parallel processing\nconst results = $json.results;\nconst options = $json.options;\n\nif (results.length === 0) {\n  return { json: { ...$json, merged_data: {}, conflicts: [] } };\n}\n\nconst merged = {};\nconst conflicts = [];\nconst provenance = [];\n\nfor (let i = 0; i < results.length; i++) {\n  const result = results[i];\n  const data = result.extracted_data || result.data || result;\n  \n  for (const [key, value] of Object.entries(data)) {\n    if (merged[key] === undefined) {\n      merged[key] = value;\n      provenance.push({ field: key, source_index: i, value });\n    } else if (JSON.stringify(merged[key]) !== JSON.stringify(value)) {\n      // Conflict detected\n      conflicts.push({\n        field: key,\n        existing_value: merged[key],\n        existing_source: provenance.find(p => p.field === key)?.source_index,\n        new_value: value,\n        new_source: i\n      });\n      \n      // Resolution strategy based on options\n      if (options.conflict_resolution === 'latest') {\n        merged[key] = value;\n        provenance.push({ field: key, source_index: i, value, resolved: true });\n      } else if (options.conflict_resolution === 'highest_confidence') {\n        const existingConfidence = results[provenance.find(p => p.field === key)?.source_index]?.confidence || 0;\n        const newConfidence = result.confidence || 0;\n        if (newConfidence > existingConfidence) {\n          merged[key] = value;\n          provenance.push({ field: key, source_index: i, value, resolved: true });\n        }\n      }\n      // Default: keep first value (already in merged)\n    }\n  }\n}\n\nreturn {\n  json: {\n    ...$json,\n    merged_data: merged,\n    conflicts,\n    provenance\n  }\n};"
+      },
+      "id": "merge-results",
+      "name": "Merge Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [690, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{ $json.conflicts.length }}",
+              "operation": "larger",
+              "value2": 0
+            }
+          ]
+        }
+      },
+      "id": "has-conflicts",
+      "name": "Has Conflicts?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [910, 300]
+    },
+    {
+      "parameters": {
+        "resource": "chat",
+        "model": "gpt-4o-mini",
+        "options": {
+          "maxTokens": 1024,
+          "temperature": 0.1
+        },
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "You are a data reconciliation expert. Analyze the conflicting values and recommend the best resolution.\n\nRespond with JSON:\n{\n  \"resolutions\": [\n    {\n      \"field\": \"field_name\",\n      \"recommended_value\": \"value\",\n      \"confidence\": 0.9,\n      \"reasoning\": \"explanation\"\n    }\n  ],\n  \"needs_manual_review\": false\n}"
+            },
+            {
+              "role": "user",
+              "content": "Resolve these data conflicts:\n\n{{ JSON.stringify($json.conflicts) }}\n\nContext from merged data:\n{{ JSON.stringify($json.merged_data) }}"
+            }
+          ]
+        }
+      },
+      "id": "resolve-conflicts",
+      "name": "AI Conflict Resolution",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1,
+      "position": [1130, 200],
+      "credentials": {
+        "openAiApi": {
+          "id": "openai-credentials",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Apply AI resolutions\nconst item = $input.item;\nconst inputData = $('Merge Results').item.json;\n\nlet resolutions;\ntry {\n  let text = item.json.message?.content || item.json.text || '{}';\n  if (text.includes('```')) {\n    text = text.replace(/```json\\n?/g, '').replace(/```\\n?/g, '');\n  }\n  resolutions = JSON.parse(text.trim());\n} catch (e) {\n  resolutions = { resolutions: [], needs_manual_review: true };\n}\n\n// Apply resolutions to merged data\nconst finalData = { ...inputData.merged_data };\nfor (const resolution of resolutions.resolutions || []) {\n  if (resolution.confidence >= 0.7) {\n    finalData[resolution.field] = resolution.recommended_value;\n  }\n}\n\nreturn {\n  json: {\n    ...inputData,\n    final_data: finalData,\n    ai_resolutions: resolutions,\n    needs_manual_review: resolutions.needs_manual_review || false\n  }\n};"
+      },
+      "id": "apply-resolutions",
+      "name": "Apply Resolutions",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1350, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "// No conflicts - pass through\nreturn {\n  json: {\n    ...$json,\n    final_data: $json.merged_data,\n    ai_resolutions: null,\n    needs_manual_review: false\n  }\n};"
+      },
+      "id": "no-conflicts",
+      "name": "No Conflicts",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1130, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Cross-validate aggregated data\nconst data = $json.final_data;\nconst results = $json.results;\n\nconst validationResults = [];\n\n// Check consistency across sources\nfor (const [field, value] of Object.entries(data)) {\n  const sourceValues = results\n    .map(r => (r.extracted_data || r.data || r)[field])\n    .filter(v => v !== undefined);\n  \n  const uniqueValues = [...new Set(sourceValues.map(v => JSON.stringify(v)))];\n  \n  validationResults.push({\n    field,\n    final_value: value,\n    source_count: sourceValues.length,\n    unique_values: uniqueValues.length,\n    consistency: uniqueValues.length === 1 ? 1 : 1 / uniqueValues.length\n  });\n}\n\nconst avgConsistency = validationResults.length > 0 ?\n  validationResults.reduce((sum, v) => sum + v.consistency, 0) / validationResults.length : 1;\n\nreturn {\n  json: {\n    ...$json,\n    cross_validation: {\n      results: validationResults,\n      average_consistency: avgConsistency,\n      passed: avgConsistency >= 0.7\n    }\n  }\n};"
+      },
+      "id": "cross-validate",
+      "name": "Cross Validation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1570, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/processing_logs",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ resource_type: 'aggregation', resource_id: $json.aggregation_id, user_id: $json.user_id, action: 'data_aggregation', status: $json.cross_validation.passed ? 'completed' : 'needs_review', details: { sources_count: $json.results.length, conflicts_count: $json.conflicts.length, consistency_score: $json.cross_validation.average_consistency, needs_manual_review: $json.needs_manual_review } }) }}",
+        "options": {}
+      },
+      "id": "log-aggregation",
+      "name": "Log Aggregation",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1790, 300],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "supabase-auth",
+          "name": "Supabase Service Role"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: true, aggregation_id: $json.aggregation_id, final_data: $json.final_data, conflicts_resolved: $json.conflicts.length, consistency_score: $json.cross_validation.average_consistency, needs_manual_review: $json.needs_manual_review, provenance: $json.provenance }) }}"
+      },
+      "id": "response",
+      "name": "Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [2010, 300]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Parse Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Input": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Results": {
+      "main": [
+        [
+          {
+            "node": "Has Conflicts?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Conflicts?": {
+      "main": [
+        [
+          {
+            "node": "AI Conflict Resolution",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No Conflicts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Conflict Resolution": {
+      "main": [
+        [
+          {
+            "node": "Apply Resolutions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apply Resolutions": {
+      "main": [
+        [
+          {
+            "node": "Cross Validation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "No Conflicts": {
+      "main": [
+        [
+          {
+            "node": "Cross Validation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cross Validation": {
+      "main": [
+        [
+          {
+            "node": "Log Aggregation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Aggregation": {
+      "main": [
+        [
+          {
+            "node": "Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "aggregation"
+    }
+  ],
+  "triggerCount": 1,
+  "pinData": {}
+}

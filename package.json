@@ -1,6 +1,55 @@
 {
+  "name": "tax-document-processing",
+  "version": "1.0.0",
+  "description": "Tax Document Processing System with RAG, KAG, N8N workflows, and WeWeb integration",
+  "main": "dist/src/app.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/src/app.js",
+    "dev": "ts-node-dev --respawn --transpile-only src/app.ts",
+    "lint": "eslint src/**/*.ts",
+    "test": "jest",
+    "clean": "rimraf dist",
+    "vercel-build": "tsc"
+  },
   "dependencies": {
     "@supabase/supabase-js": "^2.93.2",
-    "dotenv": "^17.2.3"
-  }
+    "compression": "^1.7.4",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.3",
+    "express": "^4.18.2",
+    "express-rate-limit": "^7.1.5",
+    "helmet": "^7.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "openai": "^4.20.1",
+    "uuid": "^9.0.1",
+    "zod": "^3.22.4"
+  },
+  "devDependencies": {
+    "@types/compression": "^1.7.5",
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/jsonwebtoken": "^9.0.5",
+    "@types/node": "^20.10.4",
+    "@types/uuid": "^9.0.7",
+    "rimraf": "^5.0.5",
+    "supabase": "^2.72.9",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.3.3"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": [
+    "tax",
+    "document-processing",
+    "ocr",
+    "rag",
+    "kag",
+    "n8n",
+    "supabase",
+    "openai"
+  ],
+  "author": "",
+  "license": "MIT"
 }

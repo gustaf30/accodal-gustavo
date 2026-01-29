@@ -1,0 +1,663 @@
+{
+  "name": "Master Orchestrator",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "orchestrate",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [250, 300],
+      "webhookId": "orchestrator"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 1
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Poll Task Queue",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [250, 500]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse incoming request and create task\nconst item = $input.item;\nconst body = item.json.body || item.json;\n\n// Determine task type and priority\nlet taskType = body.task_type || 'document';\nlet priority = body.priority || 2; // Default to P2 (normal)\n\n// Auto-prioritize based on criteria\nif (body.urgent === true || body.deadline) {\n  priority = Math.min(priority, 1); // At least P1\n}\nif (body.batch_size > 10) {\n  priority = Math.max(priority, 3); // Lower priority for large batches\n}\n\n// Map task type to worker workflow\nconst workerMapping = {\n  'document': 'document-worker',\n  'audio': 'audio-worker',\n  'text': 'text-worker',\n  'onboarding': 'onboarding-worker',\n  'communication': 'communication-worker'\n};\n\nconst workflowName = workerMapping[taskType] || 'document-worker';\n\nreturn {\n  json: {\n    workflow_name: workflowName,\n    task_type: taskType,\n    priority: priority,\n    payload: body.payload || body,\n    user_id: body.user_id,\n    metadata: body.metadata || {},\n    source: 'webhook'\n  }\n};"
+      },
+      "id": "create-task-webhook",
+      "name": "Create Task from Webhook",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [470, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/task_queue?status=eq.pending&order=priority.asc,created_at.asc&limit=10",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "fetch-pending-tasks",
+      "name": "Fetch Pending Tasks",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [470, 500],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "supabase-auth",
+          "name": "Supabase Service Role"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/task_queue",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "insert-task",
+      "name": "Insert Task to Queue",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [690, 300],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "supabase-auth",
+          "name": "Supabase Service Role"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: true, task_id: $json[0].id, priority: $json[0].priority, workflow: $json[0].workflow_name, status: 'queued' }) }}"
+      },
+      "id": "webhook-response",
+      "name": "Webhook Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [910, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{ Array.isArray($json) ? $json.length : 0 }}",
+              "operation": "larger",
+              "value2": 0
+            }
+          ]
+        }
+      },
+      "id": "has-pending-tasks",
+      "name": "Has Pending Tasks?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [690, 500]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Process pending tasks and route to workers\nconst tasks = $input.all()[0].json;\nconst taskArray = Array.isArray(tasks) ? tasks : [tasks];\n\nreturn taskArray.filter(t => t && t.id).map(task => ({\n  json: {\n    ...task,\n    claimed_at: new Date().toISOString(),\n    worker_id: 'orchestrator-' + Math.random().toString(36).substr(2, 9)\n  }\n}));"
+      },
+      "id": "prepare-tasks",
+      "name": "Prepare Tasks for Workers",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [910, 400]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/task_queue?id=eq.{{ $json.id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ status: 'processing', worker_id: $json.worker_id, started_at: $json.claimed_at }) }}",
+        "options": {}
+      },
+      "id": "claim-task",
+      "name": "Claim Task",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1130, 400],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "supabase-auth",
+          "name": "Supabase Service Role"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{ $('Prepare Tasks for Workers').item.json.workflow_name }}",
+                    "rightValue": "document-worker"
+                  }
+                ]
+              },
+              "outputIndex": 0
+            },
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{ $('Prepare Tasks for Workers').item.json.workflow_name }}",
+                    "rightValue": "audio-worker"
+                  }
+                ]
+              },
+              "outputIndex": 1
+            },
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{ $('Prepare Tasks for Workers').item.json.workflow_name }}",
+                    "rightValue": "text-worker"
+                  }
+                ]
+              },
+              "outputIndex": 2
+            },
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{ $('Prepare Tasks for Workers').item.json.workflow_name }}",
+                    "rightValue": "onboarding-worker"
+                  }
+                ]
+              },
+              "outputIndex": 3
+            },
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{ $('Prepare Tasks for Workers').item.json.workflow_name }}",
+                    "rightValue": "communication-worker"
+                  }
+                ]
+              },
+              "outputIndex": 4
+            }
+          ]
+        },
+        "fallbackOutput": "extra"
+      },
+      "id": "route-to-worker",
+      "name": "Route to Worker",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 2,
+      "position": [1350, 400]
+    },
+    {
+      "parameters": {
+        "workflowId": "={{ $env.DOCUMENT_WORKER_ID || 'document-worker' }}",
+        "options": {},
+        "parameters": {
+          "values": [
+            {
+              "name": "task",
+              "value": "={{ JSON.stringify($('Prepare Tasks for Workers').item.json) }}"
+            }
+          ]
+        }
+      },
+      "id": "execute-document-worker",
+      "name": "Execute Document Worker",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [1570, 100],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "workflowId": "={{ $env.AUDIO_WORKER_ID || 'audio-worker' }}",
+        "options": {},
+        "parameters": {
+          "values": [
+            {
+              "name": "task",
+              "value": "={{ JSON.stringify($('Prepare Tasks for Workers').item.json) }}"
+            }
+          ]
+        }
+      },
+      "id": "execute-audio-worker",
+      "name": "Execute Audio Worker",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [1570, 250],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "workflowId": "={{ $env.TEXT_WORKER_ID || 'text-worker' }}",
+        "options": {},
+        "parameters": {
+          "values": [
+            {
+              "name": "task",
+              "value": "={{ JSON.stringify($('Prepare Tasks for Workers').item.json) }}"
+            }
+          ]
+        }
+      },
+      "id": "execute-text-worker",
+      "name": "Execute Text Worker",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [1570, 400],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "workflowId": "={{ $env.ONBOARDING_WORKER_ID || 'onboarding-worker' }}",
+        "options": {},
+        "parameters": {
+          "values": [
+            {
+              "name": "task",
+              "value": "={{ JSON.stringify($('Prepare Tasks for Workers').item.json) }}"
+            }
+          ]
+        }
+      },
+      "id": "execute-onboarding-worker",
+      "name": "Execute Onboarding Worker",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [1570, 550],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "workflowId": "={{ $env.COMMUNICATION_WORKER_ID || 'communication-worker' }}",
+        "options": {},
+        "parameters": {
+          "values": [
+            {
+              "name": "task",
+              "value": "={{ JSON.stringify($('Prepare Tasks for Workers').item.json) }}"
+            }
+          ]
+        }
+      },
+      "id": "execute-communication-worker",
+      "name": "Execute Communication Worker",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [1570, 700],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Check worker result and prepare task update\nconst item = $input.item;\nconst taskData = $('Prepare Tasks for Workers').item.json;\nconst success = item.json.success === true;\nconst startTime = new Date(taskData.claimed_at);\nconst endTime = new Date();\nconst durationMs = endTime - startTime;\n\nreturn {\n  json: {\n    task_id: taskData.id,\n    status: success ? 'completed' : 'failed',\n    result: item.json,\n    error_message: success ? null : (item.json.error || item.json.message || 'Worker execution failed'),\n    completed_at: endTime.toISOString(),\n    duration_ms: durationMs,\n    retry_count: (taskData.retry_count || 0) + (success ? 0 : 1)\n  }\n};"
+      },
+      "id": "prepare-task-update",
+      "name": "Prepare Task Update",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1790, 400]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/task_queue?id=eq.{{ $json.task_id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ status: $json.status, completed_at: $json.completed_at, result: $json.result, error_message: $json.error_message, retry_count: $json.retry_count }) }}",
+        "options": {}
+      },
+      "id": "update-task-status",
+      "name": "Update Task Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2010, 400],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "supabase-auth",
+          "name": "Supabase Service Role"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/worker_metrics",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ worker_name: $('Prepare Tasks for Workers').item.json.workflow_name, metric_type: 'execution', value: $('Prepare Task Update').item.json.duration_ms, tags: { status: $('Prepare Task Update').item.json.status, task_type: $('Prepare Tasks for Workers').item.json.task_type, priority: $('Prepare Tasks for Workers').item.json.priority } }) }}",
+        "options": {}
+      },
+      "id": "record-metrics",
+      "name": "Record Metrics",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2230, 400],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "supabase-auth",
+          "name": "Supabase Service Role"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "id": "no-tasks",
+      "name": "No Tasks",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [910, 600]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Create Task from Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Poll Task Queue": {
+      "main": [
+        [
+          {
+            "node": "Fetch Pending Tasks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Task from Webhook": {
+      "main": [
+        [
+          {
+            "node": "Insert Task to Queue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Task to Queue": {
+      "main": [
+        [
+          {
+            "node": "Webhook Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Pending Tasks": {
+      "main": [
+        [
+          {
+            "node": "Has Pending Tasks?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Pending Tasks?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Tasks for Workers",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No Tasks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Tasks for Workers": {
+      "main": [
+        [
+          {
+            "node": "Claim Task",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claim Task": {
+      "main": [
+        [
+          {
+            "node": "Route to Worker",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route to Worker": {
+      "main": [
+        [
+          {
+            "node": "Execute Document Worker",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Execute Audio Worker",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Execute Text Worker",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Execute Onboarding Worker",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Execute Communication Worker",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Document Worker": {
+      "main": [
+        [
+          {
+            "node": "Prepare Task Update",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Audio Worker": {
+      "main": [
+        [
+          {
+            "node": "Prepare Task Update",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Text Worker": {
+      "main": [
+        [
+          {
+            "node": "Prepare Task Update",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Onboarding Worker": {
+      "main": [
+        [
+          {
+            "node": "Prepare Task Update",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Communication Worker": {
+      "main": [
+        [
+          {
+            "node": "Prepare Task Update",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Task Update": {
+      "main": [
+        [
+          {
+            "node": "Update Task Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Task Status": {
+      "main": [
+        [
+          {
+            "node": "Record Metrics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "error-notifications"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "orchestration"
+    },
+    {
+      "name": "master"
+    }
+  ],
+  "triggerCount": 2,
+  "pinData": {}
+}

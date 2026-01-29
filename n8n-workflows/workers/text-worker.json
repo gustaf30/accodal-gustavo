@@ -1,0 +1,201 @@
+{
+  "name": "Text Worker",
+  "nodes": [
+    {
+      "parameters": {
+        "values": {
+          "values": [
+            {
+              "name": "task",
+              "value": "={{ $execution.customData.task || '{}' }}"
+            }
+          ]
+        }
+      },
+      "id": "input",
+      "name": "Workflow Input",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const taskStr = $input.item.json.task || '{}';\nlet task;\ntry {\n  task = typeof taskStr === 'string' ? JSON.parse(taskStr) : taskStr;\n} catch (e) {\n  task = taskStr;\n}\n\nconst payload = task.payload || task;\n\nreturn {\n  json: {\n    source: payload.source || 'api',\n    source_identifier: payload.source_identifier,\n    subject: payload.subject,\n    content: payload.content || payload.text || payload.body,\n    user_id: payload.user_id,\n    task_id: task.id,\n    metadata: payload.metadata || {}\n  }\n};"
+      },
+      "id": "parse-task",
+      "name": "Parse Task",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [470, 300]
+    },
+    {
+      "parameters": {
+        "resource": "chat",
+        "model": "gpt-4o-mini",
+        "options": {
+          "maxTokens": 3000,
+          "temperature": 0.1
+        },
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "Analyze this text and extract financial/tax information.\n\nRespond with JSON:\n{\n  \"document_type\": \"email|letter|statement|memo|other\",\n  \"category\": \"tax_inquiry|document_request|payment_info|account_update|general|other\",\n  \"urgency\": \"high|medium|low\",\n  \"extracted_data\": {\n    \"amounts\": [{\"value\": 1000, \"currency\": \"USD\", \"context\": \"...\"}],\n    \"dates\": [{\"date\": \"2024-04-15\", \"context\": \"...\"}],\n    \"ssn_mentions\": [\"XXX-XX-1234\"],\n    \"tax_id_mentions\": [\"XX-XXX1234\"],\n    \"names\": [],\n    \"companies\": [],\n    \"document_references\": []\n  },\n  \"action_items\": [],\n  \"summary\": \"...\"\n}"
+            },
+            {
+              "role": "user",
+              "content": "Subject: {{ $json.subject || 'N/A' }}\n\n{{ $json.content }}"
+            }
+          ]
+        }
+      },
+      "id": "analyze-text",
+      "name": "Analyze Text",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1,
+      "position": [690, 300],
+      "credentials": {
+        "openAiApi": {
+          "id": "openai-credentials",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.item;\nconst inputData = $('Parse Task').item.json;\n\nlet extraction;\ntry {\n  let text = item.json.message?.content || item.json.text || '{}';\n  if (text.includes('```')) {\n    text = text.replace(/```json\\n?/g, '').replace(/```\\n?/g, '');\n  }\n  extraction = JSON.parse(text.trim());\n} catch (e) {\n  extraction = { document_type: 'other', category: 'other', urgency: 'low', extracted_data: {}, parse_error: e.message };\n}\n\n// Mask sensitive content\nlet maskedContent = inputData.content;\nmaskedContent = maskedContent.replace(/\\b\\d{3}[-\\s]?\\d{2}[-\\s]?\\d{4}\\b/g, '[SSN REDACTED]');\nmaskedContent = maskedContent.replace(/\\b\\d{2}[-\\s]?\\d{7}\\b/g, '[EIN REDACTED]');\n\nreturn {\n  json: {\n    source: inputData.source,\n    source_identifier: inputData.source_identifier,\n    subject: inputData.subject,\n    content: maskedContent,\n    user_id: inputData.user_id,\n    task_id: inputData.task_id,\n    extracted_data: extraction\n  }\n};"
+      },
+      "id": "process-extraction",
+      "name": "Process Extraction",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [910, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/functions/v1/validate-text",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "text",
+              "value": "={{ JSON.stringify($json) }}"
+            },
+            {
+              "name": "user_id",
+              "value": "={{ $json.user_id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "validate-store",
+      "name": "Validate & Store",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1130, 300],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "supabase-auth",
+          "name": "Supabase Service Role"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const result = $input.item.json;\nconst extraction = $('Process Extraction').item.json.extracted_data;\n\nreturn {\n  json: {\n    success: result.success === true,\n    text_id: result.text_id,\n    task_id: $('Parse Task').item.json.task_id,\n    warnings: result.warnings,\n    category: extraction.category,\n    urgency: extraction.urgency,\n    summary: extraction.summary\n  }\n};"
+      },
+      "id": "format-output",
+      "name": "Format Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1350, 300]
+    }
+  ],
+  "connections": {
+    "Workflow Input": {
+      "main": [
+        [
+          {
+            "node": "Parse Task",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Task": {
+      "main": [
+        [
+          {
+            "node": "Analyze Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze Text": {
+      "main": [
+        [
+          {
+            "node": "Process Extraction",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Extraction": {
+      "main": [
+        [
+          {
+            "node": "Validate & Store",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate & Store": {
+      "main": [
+        [
+          {
+            "node": "Format Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "error-notifications"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "worker"
+    },
+    {
+      "name": "text"
+    }
+  ],
+  "triggerCount": 0,
+  "pinData": {}
+}

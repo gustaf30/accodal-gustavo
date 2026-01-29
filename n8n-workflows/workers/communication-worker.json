@@ -1,0 +1,191 @@
+{
+  "name": "Communication Worker",
+  "nodes": [
+    {
+      "parameters": {
+        "values": {
+          "values": [
+            {
+              "name": "task",
+              "value": "={{ $execution.customData.task || '{}' }}"
+            }
+          ]
+        }
+      },
+      "id": "input",
+      "name": "Workflow Input",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const taskStr = $input.item.json.task || '{}';\nlet task;\ntry {\n  task = typeof taskStr === 'string' ? JSON.parse(taskStr) : taskStr;\n} catch (e) {\n  task = taskStr;\n}\n\nconst payload = task.payload || task;\n\nreturn {\n  json: {\n    communication_type: payload.type || 'response',\n    recipient_email: payload.recipient_email || payload.to,\n    recipient_name: payload.recipient_name,\n    subject: payload.subject,\n    context: payload.context || {},\n    original_message: payload.original_message,\n    tone: payload.tone || 'professional',\n    user_id: payload.user_id,\n    task_id: task.id\n  }\n};"
+      },
+      "id": "parse-task",
+      "name": "Parse Task",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [470, 300]
+    },
+    {
+      "parameters": {
+        "resource": "chat",
+        "model": "gpt-4o-mini",
+        "options": {
+          "maxTokens": 2048,
+          "temperature": 0.7
+        },
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "You are a professional communication assistant for a tax preparation service. Generate context-aware, helpful responses.\n\nTone: {{ $json.tone }}\n\nRespond with JSON:\n{\n  \"subject\": \"Email subject line\",\n  \"greeting\": \"Dear [Name],\",\n  \"body\": \"Main message content...\",\n  \"closing\": \"Best regards,\",\n  \"action_items\": [\"List any action items for the recipient\"],\n  \"attachments_needed\": [],\n  \"follow_up_date\": null,\n  \"priority\": \"normal\"\n}"
+            },
+            {
+              "role": "user",
+              "content": "Generate a {{ $json.communication_type }} for:\n\nRecipient: {{ $json.recipient_name || 'Client' }}\nSubject: {{ $json.subject || 'Tax Document Update' }}\n\nContext:\n{{ JSON.stringify($json.context) }}\n\n{{ $json.original_message ? 'Original message to respond to:\\n' + $json.original_message : '' }}"
+            }
+          ]
+        }
+      },
+      "id": "generate-response",
+      "name": "Generate Response",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1,
+      "position": [690, 300],
+      "credentials": {
+        "openAiApi": {
+          "id": "openai-credentials",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.item;\nconst inputData = $('Parse Task').item.json;\n\nlet response;\ntry {\n  let text = item.json.message?.content || item.json.text || '{}';\n  if (text.includes('```')) {\n    text = text.replace(/```json\\n?/g, '').replace(/```\\n?/g, '');\n  }\n  response = JSON.parse(text.trim());\n} catch (e) {\n  response = { \n    subject: inputData.subject || 'Tax Document Update',\n    greeting: 'Dear Client,',\n    body: 'Thank you for your inquiry. We will get back to you shortly.',\n    closing: 'Best regards,',\n    parse_error: e.message \n  };\n}\n\n// Compose full email\nconst fullEmail = `${response.greeting}\\n\\n${response.body}\\n\\n${response.closing}\\nTax Processing Team`;\n\nreturn {\n  json: {\n    recipient_email: inputData.recipient_email,\n    recipient_name: inputData.recipient_name,\n    subject: response.subject,\n    body: fullEmail,\n    body_parts: response,\n    user_id: inputData.user_id,\n    task_id: inputData.task_id,\n    action_items: response.action_items,\n    priority: response.priority\n  }\n};"
+      },
+      "id": "process-response",
+      "name": "Process Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [910, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/processing_logs",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ resource_type: 'workflow', resource_id: $json.task_id, user_id: $json.user_id, action: 'communication_generated', status: 'completed', details: { recipient: $json.recipient_email, subject: $json.subject, priority: $json.priority, action_items: $json.action_items } }) }}",
+        "options": {}
+      },
+      "id": "log-communication",
+      "name": "Log Communication",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1130, 300],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "supabase-auth",
+          "name": "Supabase Service Role"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $('Process Response').item.json;\n\nreturn {\n  json: {\n    success: true,\n    task_id: data.task_id,\n    recipient: data.recipient_email,\n    subject: data.subject,\n    body_preview: data.body.substring(0, 200) + '...',\n    action_items: data.action_items,\n    priority: data.priority,\n    full_response: data.body\n  }\n};"
+      },
+      "id": "format-output",
+      "name": "Format Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1350, 300]
+    }
+  ],
+  "connections": {
+    "Workflow Input": {
+      "main": [
+        [
+          {
+            "node": "Parse Task",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Task": {
+      "main": [
+        [
+          {
+            "node": "Generate Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Response": {
+      "main": [
+        [
+          {
+            "node": "Process Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Response": {
+      "main": [
+        [
+          {
+            "node": "Log Communication",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Communication": {
+      "main": [
+        [
+          {
+            "node": "Format Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "error-notifications"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "worker"
+    },
+    {
+      "name": "communication"
+    }
+  ],
+  "triggerCount": 0,
+  "pinData": {}
+}

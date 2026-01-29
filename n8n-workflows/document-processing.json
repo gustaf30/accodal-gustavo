@@ -1,0 +1,434 @@
+{
+  "name": "Tax Document Processing",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "process-document",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": true
+        }
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [250, 300],
+      "webhookId": "document-upload"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract file data from webhook\nconst items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const body = item.json.body || item.json;\n  \n  // Support both base64 and URL-based uploads\n  let fileData = {\n    filename: body.filename || 'unknown.png',\n    mime_type: body.mime_type || body.content_type || 'image/png',\n    file_url: body.file_url || null,\n    base64_content: body.base64_content || body.file_content || null,\n    user_id: body.user_id || null,\n    metadata: body.metadata || {}\n  };\n  \n  // Validate required data\n  if (!fileData.base64_content && !fileData.file_url) {\n    throw new Error('Either base64_content or file_url is required');\n  }\n  \n  results.push({ json: fileData });\n}\n\nreturn results;"
+      },
+      "id": "parse-input",
+      "name": "Parse Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [470, 300]
+    },
+    {
+      "parameters": {
+        "resource": "chat",
+        "model": "gpt-4o",
+        "options": {
+          "maxTokens": 4096,
+          "temperature": 0.1
+        },
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "You are a tax document processing expert. Analyze the provided image and:\n1. Identify the document type (W-2, 1099, 1099-MISC, 1099-INT, 1099-DIV, 1099-NEC, Invoice, Receipt, Bank Statement, or Other)\n2. Extract ALL text and data from the document\n3. Structure the extracted data appropriately for the document type\n\nRespond ONLY with valid JSON in this format:\n{\n  \"document_type\": \"W-2|1099|1099-MISC|1099-INT|1099-DIV|1099-NEC|Invoice|Receipt|Bank Statement|Other\",\n  \"confidence\": 0.95,\n  \"extracted_data\": {\n    // For W-2:\n    \"employer_name\": \"\",\n    \"employer_ein\": \"\",\n    \"employer_address\": \"\",\n    \"employee_name\": \"\",\n    \"employee_ssn\": \"\",\n    \"employee_address\": \"\",\n    \"wages\": 0,\n    \"federal_tax_withheld\": 0,\n    \"social_security_wages\": 0,\n    \"social_security_tax\": 0,\n    \"medicare_wages\": 0,\n    \"medicare_tax\": 0,\n    \"state\": \"\",\n    \"state_wages\": 0,\n    \"state_tax_withheld\": 0,\n    \"tax_year\": \"\",\n    \n    // For 1099:\n    \"payer_name\": \"\",\n    \"payer_tin\": \"\",\n    \"payer_address\": \"\",\n    \"recipient_name\": \"\",\n    \"recipient_ssn\": \"\",\n    \"recipient_address\": \"\",\n    \"amount\": 0,\n    \"federal_tax_withheld\": 0,\n    \"tax_year\": \"\",\n    \n    // For Invoice:\n    \"vendor_name\": \"\",\n    \"vendor_address\": \"\",\n    \"invoice_number\": \"\",\n    \"invoice_date\": \"\",\n    \"due_date\": \"\",\n    \"line_items\": [],\n    \"subtotal\": 0,\n    \"tax\": 0,\n    \"total_amount\": 0\n  },\n  \"raw_text\": \"Full OCR text here\",\n  \"ocr_confidence\": 0.92\n}"
+            },
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Analyze this tax document and extract all information:"
+                },
+                {
+                  "type": "image_url",
+                  "image_url": {
+                    "url": "={{ $json.base64_content ? 'data:' + $json.mime_type + ';base64,' + $json.base64_content : $json.file_url }}"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "id": "openai-vision",
+      "name": "OpenAI GPT-4 Vision OCR",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1,
+      "position": [690, 300],
+      "credentials": {
+        "openAiApi": {
+          "id": "openai-credentials",
+          "name": "OpenAI API"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse OpenAI response and prepare for storage\nconst items = $input.all();\nconst results = [];\n\nfor (let i = 0; i < items.length; i++) {\n  const item = items[i];\n  const inputData = $('Parse Input').item(i).json;\n  \n  let ocrResult;\n  try {\n    // Extract JSON from response\n    let responseText = item.json.message?.content || item.json.text || '';\n    \n    // Handle markdown code blocks\n    if (responseText.includes('```json')) {\n      responseText = responseText.replace(/```json\\n?/g, '').replace(/```\\n?/g, '');\n    } else if (responseText.includes('```')) {\n      responseText = responseText.replace(/```\\n?/g, '');\n    }\n    \n    ocrResult = JSON.parse(responseText.trim());\n  } catch (e) {\n    ocrResult = {\n      document_type: 'Other',\n      confidence: 0.5,\n      extracted_data: {},\n      raw_text: item.json.message?.content || '',\n      ocr_confidence: 0.5,\n      parse_error: e.message\n    };\n  }\n  \n  results.push({\n    json: {\n      filename: inputData.filename,\n      file_url: inputData.file_url,\n      mime_type: inputData.mime_type,\n      user_id: inputData.user_id,\n      type: ocrResult.document_type,\n      extracted_data: ocrResult.extracted_data || {},\n      raw_text: ocrResult.raw_text,\n      ocr_confidence: ocrResult.ocr_confidence,\n      classification_confidence: ocrResult.confidence,\n      metadata: inputData.metadata\n    }\n  });\n}\n\nreturn results;"
+      },
+      "id": "process-ocr-result",
+      "name": "Process OCR Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [910, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/functions/v1/validate-document",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "document",
+              "value": "={{ JSON.stringify({ filename: $json.filename, file_url: $json.file_url, mime_type: $json.mime_type, type: $json.type, extracted_data: $json.extracted_data, ocr_confidence: $json.ocr_confidence, classification_confidence: $json.classification_confidence }) }}"
+            },
+            {
+              "name": "user_id",
+              "value": "={{ $json.user_id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "store-in-supabase",
+      "name": "Validate & Store in Supabase",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1130, 300],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "supabase-auth",
+          "name": "Supabase Service Role"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.success }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "check-success",
+      "name": "Check Success",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1350, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/functions/v1/store-embedding",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "document_id",
+              "value": "={{ $json.document_id }}"
+            },
+            {
+              "name": "content",
+              "value": "={{ $('Process OCR Result').item.json.raw_text || JSON.stringify($('Process OCR Result').item.json.extracted_data) }}"
+            },
+            {
+              "name": "generate_embedding",
+              "value": true
+            },
+            {
+              "name": "chunk_text",
+              "value": true
+            },
+            {
+              "name": "metadata",
+              "value": "={{ JSON.stringify({ document_type: $('Process OCR Result').item.json.type, filename: $('Process OCR Result').item.json.filename }) }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "generate-embeddings",
+      "name": "Generate Embeddings",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1570, 200],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "supabase-auth",
+          "name": "Supabase Service Role"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: true, document_id: $('Validate & Store in Supabase').item.json.document_id, type: $('Process OCR Result').item.json.type, status: $('Validate & Store in Supabase').item.json.status, embeddings_stored: $json.embeddings_stored || 0 }) }}"
+      },
+      "id": "success-response",
+      "name": "Success Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1790, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Handle error and add to DLQ\nconst items = $input.all();\nconst inputData = $('Parse Input').first().json;\n\nreturn [{\n  json: {\n    resource_type: 'document',\n    payload: {\n      filename: inputData.filename,\n      file_url: inputData.file_url,\n      user_id: inputData.user_id,\n      error_stage: 'validation',\n      original_response: $('Validate & Store in Supabase').first().json\n    },\n    error_message: $('Validate & Store in Supabase').first().json.errors?.join('; ') || 'Unknown validation error',\n    error_code: 'VALIDATION_FAILED'\n  }\n}];"
+      },
+      "id": "prepare-dlq",
+      "name": "Prepare DLQ Entry",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1570, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/dead_letter_queue",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "add-to-dlq",
+      "name": "Add to DLQ",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1790, 400],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "supabase-auth",
+          "name": "Supabase Service Role"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: 'Document processing failed', dlq_id: $json.id, message: $('Prepare DLQ Entry').item.json.error_message }) }}",
+        "options": {
+          "responseCode": 422
+        }
+      },
+      "id": "error-response",
+      "name": "Error Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [2010, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/processing_logs",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ resource_type: 'document', resource_id: null, action: 'ocr_processing', status: 'failed', error_message: $json.message || 'OCR processing failed', details: { stage: 'openai_vision' } }) }}",
+        "options": {}
+      },
+      "id": "log-ocr-error",
+      "name": "Log OCR Error",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [910, 500],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "supabase-auth",
+          "name": "Supabase Service Role"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Parse Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Input": {
+      "main": [
+        [
+          {
+            "node": "OpenAI GPT-4 Vision OCR",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI GPT-4 Vision OCR": {
+      "main": [
+        [
+          {
+            "node": "Process OCR Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process OCR Result": {
+      "main": [
+        [
+          {
+            "node": "Validate & Store in Supabase",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate & Store in Supabase": {
+      "main": [
+        [
+          {
+            "node": "Check Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Success": {
+      "main": [
+        [
+          {
+            "node": "Generate Embeddings",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare DLQ Entry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Embeddings": {
+      "main": [
+        [
+          {
+            "node": "Success Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare DLQ Entry": {
+      "main": [
+        [
+          {
+            "node": "Add to DLQ",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Add to DLQ": {
+      "main": [
+        [
+          {
+            "node": "Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "error-notifications"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "tax-processing"
+    },
+    {
+      "name": "document"
+    }
+  ],
+  "triggerCount": 1,
+  "pinData": {}
+}

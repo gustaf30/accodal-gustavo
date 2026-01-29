@@ -1,0 +1,536 @@
+{
+  "name": "Dead Letter Queue Handler",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 5
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Every 5 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/rpc/get_dlq_items_for_retry",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"p_limit\": 10}",
+        "options": {}
+      },
+      "id": "fetch-dlq-items",
+      "name": "Fetch DLQ Items",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [470, 300],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "supabase-auth",
+          "name": "Supabase Service Role"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{ $json.length || 0 }}",
+              "operation": "larger",
+              "value2": 0
+            }
+          ]
+        }
+      },
+      "id": "has-items",
+      "name": "Has Items?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [690, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Split items and add retry metadata\nconst response = $input.all()[0].json;\nconst items = Array.isArray(response) ? response : [response];\n\nreturn items.filter(item => item && item.id).map(item => ({\n  json: {\n    ...item,\n    retry_attempt: item.retry_count || 1,\n    exponential_delay: Math.pow(2, item.retry_count || 1) * 1000\n  }\n}));"
+      },
+      "id": "split-items",
+      "name": "Split & Prepare Items",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [910, 200]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.resource_type }}",
+              "value2": "document"
+            }
+          ]
+        }
+      },
+      "id": "route-by-type",
+      "name": "Route by Type",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 2,
+      "position": [1130, 200],
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.resource_type }}",
+                    "rightValue": "document"
+                  }
+                ]
+              },
+              "outputIndex": 0
+            },
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.resource_type }}",
+                    "rightValue": "audio"
+                  }
+                ]
+              },
+              "outputIndex": 1
+            },
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.resource_type }}",
+                    "rightValue": "text"
+                  }
+                ]
+              },
+              "outputIndex": 2
+            }
+          ]
+        },
+        "fallbackOutput": "extra"
+      }
+    },
+    {
+      "parameters": {
+        "workflowId": "={{ $env.DOCUMENT_WORKFLOW_ID || 'document-processing' }}",
+        "options": {},
+        "parameters": {
+          "values": [
+            {
+              "name": "body",
+              "value": "={{ $json.payload }}"
+            },
+            {
+              "name": "dlq_retry",
+              "value": true
+            },
+            {
+              "name": "dlq_id",
+              "value": "={{ $json.id }}"
+            }
+          ]
+        }
+      },
+      "id": "retry-document",
+      "name": "Retry Document Workflow",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [1350, 100],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "workflowId": "={{ $env.AUDIO_WORKFLOW_ID || 'audio-processing' }}",
+        "options": {},
+        "parameters": {
+          "values": [
+            {
+              "name": "body",
+              "value": "={{ $json.payload }}"
+            },
+            {
+              "name": "dlq_retry",
+              "value": true
+            },
+            {
+              "name": "dlq_id",
+              "value": "={{ $json.id }}"
+            }
+          ]
+        }
+      },
+      "id": "retry-audio",
+      "name": "Retry Audio Workflow",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [1350, 250],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "workflowId": "={{ $env.TEXT_WORKFLOW_ID || 'text-processing' }}",
+        "options": {},
+        "parameters": {
+          "values": [
+            {
+              "name": "body",
+              "value": "={{ $json.payload }}"
+            },
+            {
+              "name": "dlq_retry",
+              "value": true
+            },
+            {
+              "name": "dlq_id",
+              "value": "={{ $json.id }}"
+            }
+          ]
+        }
+      },
+      "id": "retry-text",
+      "name": "Retry Text Workflow",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [1350, 400],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Check retry result and prepare update\nconst item = $input.item;\nconst dlqItem = $('Split & Prepare Items').item.json;\nconst success = item.json.success === true;\nconst maxRetries = dlqItem.max_retries || 5;\nconst currentRetry = dlqItem.retry_count || 1;\n\nlet status, nextRetryAt;\n\nif (success) {\n  status = 'completed';\n  nextRetryAt = null;\n} else if (currentRetry >= maxRetries) {\n  status = 'abandoned';\n  nextRetryAt = null;\n} else {\n  status = 'pending';\n  // Exponential backoff: 2^retry seconds\n  const delaySeconds = Math.pow(2, currentRetry);\n  nextRetryAt = new Date(Date.now() + delaySeconds * 1000).toISOString();\n}\n\nreturn {\n  json: {\n    dlq_id: dlqItem.id,\n    status,\n    next_retry_at: nextRetryAt,\n    success,\n    retry_count: currentRetry,\n    error_message: success ? null : (item.json.error || item.json.message || 'Retry failed')\n  }\n};"
+      },
+      "id": "check-retry-result",
+      "name": "Check Retry Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1570, 200]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/dead_letter_queue?id=eq.{{ $json.dlq_id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ status: $json.status, next_retry_at: $json.next_retry_at, error_message: $json.error_message }) }}",
+        "options": {}
+      },
+      "id": "update-dlq-status",
+      "name": "Update DLQ Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1790, 200],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "supabase-auth",
+          "name": "Supabase Service Role"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $('Check Retry Result').item.json.status }}",
+              "value2": "abandoned"
+            }
+          ]
+        }
+      },
+      "id": "is-abandoned",
+      "name": "Is Abandoned?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [2010, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/error_notifications",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ resource_type: $('Split & Prepare Items').item.json.resource_type, resource_id: $('Split & Prepare Items').item.json.resource_id, severity: 'CRITICAL', message: 'DLQ item abandoned after max retries: ' + ($('Split & Prepare Items').item.json.error_message || 'Unknown error'), details: { dlq_id: $('Split & Prepare Items').item.json.id, retry_count: $('Split & Prepare Items').item.json.retry_count, payload_preview: JSON.stringify($('Split & Prepare Items').item.json.payload).substring(0, 500) }, notification_channels: ['database', 'slack', 'email'] }) }}",
+        "options": {}
+      },
+      "id": "notify-abandoned",
+      "name": "Notify Abandoned",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2230, 100],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "supabase-auth",
+          "name": "Supabase Service Role"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/processing_logs",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ resource_type: 'workflow', resource_id: null, action: 'dlq_processing', status: 'completed', details: { items_processed: $('Split & Prepare Items').all().length, successful: $('Check Retry Result').all().filter(i => i.json.success).length, failed: $('Check Retry Result').all().filter(i => !i.json.success).length } }) }}",
+        "options": {}
+      },
+      "id": "log-dlq-run",
+      "name": "Log DLQ Run",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2230, 300],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "supabase-auth",
+          "name": "Supabase Service Role"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "id": "no-items",
+      "name": "No Items to Process",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [910, 400]
+    }
+  ],
+  "connections": {
+    "Every 5 Minutes": {
+      "main": [
+        [
+          {
+            "node": "Fetch DLQ Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch DLQ Items": {
+      "main": [
+        [
+          {
+            "node": "Has Items?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Items?": {
+      "main": [
+        [
+          {
+            "node": "Split & Prepare Items",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No Items to Process",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split & Prepare Items": {
+      "main": [
+        [
+          {
+            "node": "Route by Type",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route by Type": {
+      "main": [
+        [
+          {
+            "node": "Retry Document Workflow",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Retry Audio Workflow",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Retry Text Workflow",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Retry Document Workflow": {
+      "main": [
+        [
+          {
+            "node": "Check Retry Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Retry Audio Workflow": {
+      "main": [
+        [
+          {
+            "node": "Check Retry Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Retry Text Workflow": {
+      "main": [
+        [
+          {
+            "node": "Check Retry Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Retry Result": {
+      "main": [
+        [
+          {
+            "node": "Update DLQ Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update DLQ Status": {
+      "main": [
+        [
+          {
+            "node": "Is Abandoned?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Abandoned?": {
+      "main": [
+        [
+          {
+            "node": "Notify Abandoned",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log DLQ Run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify Abandoned": {
+      "main": [
+        [
+          {
+            "node": "Log DLQ Run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "error-handling"
+    },
+    {
+      "name": "dlq"
+    }
+  ],
+  "triggerCount": 1,
+  "pinData": {}
+}

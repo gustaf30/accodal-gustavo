@@ -1,0 +1,248 @@
+{
+  "name": "Quality Control Framework",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "quality-check",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [250, 300],
+      "webhookId": "quality-check"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse incoming data for quality validation\nconst item = $input.item;\nconst data = item.json.body || item.json;\n\nreturn {\n  json: {\n    resource_type: data.resource_type || 'document',\n    resource_id: data.resource_id,\n    data: data.data || {},\n    validation_rules: data.rules || ['syntax', 'semantic', 'completeness'],\n    user_id: data.user_id\n  }\n};"
+      },
+      "id": "parse-input",
+      "name": "Parse Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [470, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Syntax validation - check data format and completeness\nconst data = $json.data;\nconst resourceType = $json.resource_type;\nconst errors = [];\nconst warnings = [];\n\n// Check required fields based on resource type\nconst requiredFields = {\n  document: ['filename', 'type', 'extracted_data'],\n  audio: ['filename', 'transcription'],\n  text: ['source', 'content']\n};\n\nconst required = requiredFields[resourceType] || [];\nfor (const field of required) {\n  if (!data[field]) {\n    errors.push(`Missing required field: ${field}`);\n  }\n}\n\n// Validate data types\nif (data.ocr_confidence !== undefined) {\n  if (typeof data.ocr_confidence !== 'number' || data.ocr_confidence < 0 || data.ocr_confidence > 1) {\n    errors.push('ocr_confidence must be a number between 0 and 1');\n  }\n}\n\n// Check for empty extracted data\nif (data.extracted_data && Object.keys(data.extracted_data).length === 0) {\n  warnings.push('extracted_data is empty');\n}\n\nreturn {\n  json: {\n    ...$json,\n    syntax_validation: {\n      passed: errors.length === 0,\n      errors,\n      warnings\n    }\n  }\n};"
+      },
+      "id": "syntax-check",
+      "name": "Syntax Validation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [690, 300]
+    },
+    {
+      "parameters": {
+        "resource": "chat",
+        "model": "gpt-4o-mini",
+        "options": {
+          "maxTokens": 1024,
+          "temperature": 0.1
+        },
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "You are a data quality validator. Check if the extracted data makes semantic sense and follows business rules.\n\nValidate:\n1. Logical consistency (e.g., tax amounts shouldn't exceed wages)\n2. Date validity (dates should be reasonable)\n3. Amount formatting (should be valid numbers)\n4. Name/address plausibility\n\nRespond with JSON:\n{\n  \"passed\": true,\n  \"issues\": [],\n  \"confidence\": 0.95,\n  \"suggestions\": []\n}"
+            },
+            {
+              "role": "user",
+              "content": "Validate this {{ $json.resource_type }} data:\n\n{{ JSON.stringify($json.data) }}"
+            }
+          ]
+        }
+      },
+      "id": "semantic-validation",
+      "name": "Semantic Validation",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1,
+      "position": [910, 300],
+      "credentials": {
+        "openAiApi": {
+          "id": "openai-credentials",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Process semantic validation result\nconst item = $input.item;\nconst inputData = $('Syntax Validation').item.json;\n\nlet semanticResult;\ntry {\n  let text = item.json.message?.content || item.json.text || '{}';\n  if (text.includes('```')) {\n    text = text.replace(/```json\\n?/g, '').replace(/```\\n?/g, '');\n  }\n  semanticResult = JSON.parse(text.trim());\n} catch (e) {\n  semanticResult = { passed: false, issues: ['Failed to parse validation result'], confidence: 0 };\n}\n\nreturn {\n  json: {\n    ...inputData,\n    semantic_validation: semanticResult\n  }\n};"
+      },
+      "id": "process-semantic",
+      "name": "Process Semantic Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1130, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Calculate completeness score\nconst data = $json.data;\nconst resourceType = $json.resource_type;\n\nconst expectedFields = {\n  'W-2': ['employer_name', 'employer_ein', 'employee_name', 'wages', 'federal_tax_withheld', 'state', 'state_wages'],\n  '1099': ['payer_name', 'payer_tin', 'recipient_name', 'amount'],\n  'Invoice': ['vendor_name', 'invoice_number', 'invoice_date', 'total_amount', 'line_items'],\n  'audio': ['transcription', 'duration_seconds', 'language'],\n  'text': ['content', 'source', 'subject']\n};\n\nconst expected = expectedFields[data.type] || expectedFields[resourceType] || [];\nlet presentCount = 0;\nconst missingFields = [];\n\nconst extractedData = data.extracted_data || data;\n\nfor (const field of expected) {\n  if (extractedData[field] !== undefined && extractedData[field] !== null && extractedData[field] !== '') {\n    presentCount++;\n  } else {\n    missingFields.push(field);\n  }\n}\n\nconst completenessScore = expected.length > 0 ? presentCount / expected.length : 1;\n\nreturn {\n  json: {\n    ...$json,\n    completeness_validation: {\n      passed: completenessScore >= 0.7,\n      score: completenessScore,\n      present_fields: presentCount,\n      total_expected: expected.length,\n      missing_fields: missingFields\n    }\n  }\n};"
+      },
+      "id": "completeness-check",
+      "name": "Completeness Check",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1350, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Aggregate all validation results\nconst data = $json;\n\nconst syntaxPassed = data.syntax_validation?.passed ?? true;\nconst semanticPassed = data.semantic_validation?.passed ?? true;\nconst completenessPassed = data.completeness_validation?.passed ?? true;\n\nconst overallPassed = syntaxPassed && semanticPassed && completenessPassed;\n\nconst allErrors = [\n  ...(data.syntax_validation?.errors || []),\n  ...(data.semantic_validation?.issues || [])\n];\n\nconst allWarnings = [\n  ...(data.syntax_validation?.warnings || []),\n  ...(data.completeness_validation?.missing_fields?.map(f => `Missing field: ${f}`) || [])\n];\n\nconst qualityScore = (\n  (syntaxPassed ? 0.3 : 0) +\n  (semanticPassed ? 0.4 : 0) +\n  ((data.completeness_validation?.score || 0) * 0.3)\n);\n\nreturn {\n  json: {\n    resource_type: data.resource_type,\n    resource_id: data.resource_id,\n    user_id: data.user_id,\n    quality_check: {\n      passed: overallPassed,\n      quality_score: qualityScore,\n      validations: {\n        syntax: data.syntax_validation,\n        semantic: data.semantic_validation,\n        completeness: data.completeness_validation\n      },\n      errors: allErrors,\n      warnings: allWarnings,\n      recommendation: qualityScore >= 0.8 ? 'approved' : qualityScore >= 0.5 ? 'review_required' : 'rejected'\n    }\n  }\n};"
+      },
+      "id": "aggregate-results",
+      "name": "Aggregate Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1570, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/processing_logs",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ resource_type: $json.resource_type, resource_id: $json.resource_id, user_id: $json.user_id, action: 'quality_check', status: $json.quality_check.passed ? 'completed' : 'failed', details: $json.quality_check }) }}",
+        "options": {}
+      },
+      "id": "log-result",
+      "name": "Log Quality Check",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1790, 300],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "supabase-auth",
+          "name": "Supabase Service Role"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($('Aggregate Results').item.json) }}"
+      },
+      "id": "response",
+      "name": "Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [2010, 300]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Parse Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Input": {
+      "main": [
+        [
+          {
+            "node": "Syntax Validation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Syntax Validation": {
+      "main": [
+        [
+          {
+            "node": "Semantic Validation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Semantic Validation": {
+      "main": [
+        [
+          {
+            "node": "Process Semantic Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Semantic Result": {
+      "main": [
+        [
+          {
+            "node": "Completeness Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Completeness Check": {
+      "main": [
+        [
+          {
+            "node": "Aggregate Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate Results": {
+      "main": [
+        [
+          {
+            "node": "Log Quality Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Quality Check": {
+      "main": [
+        [
+          {
+            "node": "Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "quality-control"
+    }
+  ],
+  "triggerCount": 1,
+  "pinData": {}
+}

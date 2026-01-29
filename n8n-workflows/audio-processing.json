@@ -1,0 +1,429 @@
+{
+  "name": "Audio Transcription Processing",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "process-audio",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": true
+        }
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [250, 300],
+      "webhookId": "audio-upload"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract audio file data from webhook\nconst items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const body = item.json.body || item.json;\n  \n  let fileData = {\n    filename: body.filename || 'audio.mp3',\n    mime_type: body.mime_type || body.content_type || 'audio/mpeg',\n    file_url: body.file_url || null,\n    base64_content: body.base64_content || body.file_content || null,\n    user_id: body.user_id || null,\n    language: body.language || 'en',\n    metadata: body.metadata || {}\n  };\n  \n  // Validate required data\n  if (!fileData.base64_content && !fileData.file_url) {\n    throw new Error('Either base64_content or file_url is required');\n  }\n  \n  // Validate audio mime type\n  const validAudioTypes = ['audio/mpeg', 'audio/mp3', 'audio/wav', 'audio/wave', 'audio/webm', 'audio/ogg', 'audio/flac', 'audio/m4a'];\n  if (!validAudioTypes.some(type => fileData.mime_type.toLowerCase().includes(type.split('/')[1]))) {\n    throw new Error(`Invalid audio type: ${fileData.mime_type}. Supported: MP3, WAV, WebM, OGG, FLAC, M4A`);\n  }\n  \n  results.push({ json: fileData });\n}\n\nreturn results;"
+      },
+      "id": "parse-input",
+      "name": "Parse Audio Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [470, 300]
+    },
+    {
+      "parameters": {
+        "resource": "audio",
+        "operation": "transcribe",
+        "model": "whisper-1",
+        "options": {
+          "language": "={{ $json.language }}",
+          "responseFormat": "verbose_json"
+        },
+        "binaryPropertyName": "={{ $json.file_url ? 'data' : '' }}",
+        "inputType": "={{ $json.base64_content ? 'base64' : 'url' }}",
+        "binaryData": "={{ $json.base64_content }}",
+        "fileUrl": "={{ $json.file_url }}"
+      },
+      "id": "whisper-transcription",
+      "name": "OpenAI Whisper Transcription",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1,
+      "position": [690, 300],
+      "credentials": {
+        "openAiApi": {
+          "id": "openai-credentials",
+          "name": "OpenAI API"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "resource": "chat",
+        "model": "gpt-4o-mini",
+        "options": {
+          "maxTokens": 2048,
+          "temperature": 0.1
+        },
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "You are a financial data extraction expert. Analyze the following audio transcription and extract:\n1. Any Social Security Numbers mentioned (format: XXX-XX-XXXX)\n2. Any Tax IDs or EINs (format: XX-XXXXXXX)\n3. Income figures and amounts\n4. Dates mentioned\n5. Names of people or companies\n6. Any tax-related terms or document references\n\nRespond ONLY with valid JSON:\n{\n  \"ssn_mentions\": [\"masked SSN like XXX-XX-1234\"],\n  \"tax_id_mentions\": [\"masked EIN like XX-XXX1234\"],\n  \"income_figures\": [{\"amount\": 50000, \"context\": \"annual salary\"}],\n  \"dates\": [\"2024-01-15\"],\n  \"names\": [\"John Smith\", \"Acme Corp\"],\n  \"document_references\": [\"W-2\", \"1099\"],\n  \"key_topics\": [\"tax filing\", \"deductions\"],\n  \"summary\": \"Brief summary of the audio content\"\n}"
+            },
+            {
+              "role": "user",
+              "content": "Extract financial and tax-related entities from this transcription:\n\n{{ $json.text }}"
+            }
+          ]
+        }
+      },
+      "id": "entity-extraction",
+      "name": "NLP Entity Extraction",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1,
+      "position": [910, 300],
+      "credentials": {
+        "openAiApi": {
+          "id": "openai-credentials",
+          "name": "OpenAI API"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 2
+    },
+    {
+      "parameters": {
+        "jsCode": "// Combine transcription with entity extraction\nconst items = $input.all();\nconst results = [];\n\nfor (let i = 0; i < items.length; i++) {\n  const item = items[i];\n  const inputData = $('Parse Audio Input').item(i).json;\n  const transcriptionData = $('OpenAI Whisper Transcription').item(i).json;\n  \n  let entities;\n  try {\n    let responseText = item.json.message?.content || item.json.text || '{}';\n    \n    // Handle markdown code blocks\n    if (responseText.includes('```json')) {\n      responseText = responseText.replace(/```json\\n?/g, '').replace(/```\\n?/g, '');\n    } else if (responseText.includes('```')) {\n      responseText = responseText.replace(/```\\n?/g, '');\n    }\n    \n    entities = JSON.parse(responseText.trim());\n  } catch (e) {\n    entities = {\n      ssn_mentions: [],\n      tax_id_mentions: [],\n      income_figures: [],\n      dates: [],\n      names: [],\n      document_references: [],\n      key_topics: [],\n      summary: 'Entity extraction failed',\n      parse_error: e.message\n    };\n  }\n  \n  // Mask sensitive data in transcription\n  let maskedTranscription = transcriptionData.text || '';\n  maskedTranscription = maskedTranscription.replace(/\\b\\d{3}[-\\s]?\\d{2}[-\\s]?\\d{4}\\b/g, '[SSN REDACTED]');\n  maskedTranscription = maskedTranscription.replace(/\\b\\d{2}[-\\s]?\\d{7}\\b/g, '[EIN REDACTED]');\n  \n  results.push({\n    json: {\n      filename: inputData.filename,\n      file_url: inputData.file_url,\n      mime_type: inputData.mime_type,\n      user_id: inputData.user_id,\n      transcription: maskedTranscription,\n      duration_seconds: transcriptionData.duration || null,\n      language: transcriptionData.language || inputData.language,\n      confidence: transcriptionData.segments ? \n        transcriptionData.segments.reduce((sum, s) => sum + (s.avg_logprob || 0), 0) / transcriptionData.segments.length : \n        null,\n      extracted_entities: entities,\n      metadata: inputData.metadata\n    }\n  });\n}\n\nreturn results;"
+      },
+      "id": "combine-results",
+      "name": "Combine Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1130, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/functions/v1/validate-audio",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "audio",
+              "value": "={{ JSON.stringify({ filename: $json.filename, file_url: $json.file_url, mime_type: $json.mime_type, duration_seconds: $json.duration_seconds, transcription: $json.transcription, extracted_entities: $json.extracted_entities, confidence: $json.confidence, language: $json.language }) }}"
+            },
+            {
+              "name": "user_id",
+              "value": "={{ $json.user_id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "store-in-supabase",
+      "name": "Validate & Store Audio",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1350, 300],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "supabase-auth",
+          "name": "Supabase Service Role"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.success }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "check-success",
+      "name": "Check Success",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1570, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: true, audio_id: $json.audio_id, warnings: $json.warnings, extracted_entities: $json.extracted_entities, transcription_preview: $('Combine Results').item.json.transcription.substring(0, 200) + '...' }) }}"
+      },
+      "id": "success-response",
+      "name": "Success Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1790, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Handle error and add to DLQ\nconst inputData = $('Parse Audio Input').first().json;\n\nreturn [{\n  json: {\n    resource_type: 'audio',\n    payload: {\n      filename: inputData.filename,\n      file_url: inputData.file_url,\n      user_id: inputData.user_id,\n      error_stage: 'validation',\n      transcription_preview: $('Combine Results').first().json.transcription?.substring(0, 500)\n    },\n    error_message: $('Validate & Store Audio').first().json.errors?.join('; ') || 'Unknown validation error',\n    error_code: 'AUDIO_VALIDATION_FAILED'\n  }\n}];"
+      },
+      "id": "prepare-dlq",
+      "name": "Prepare DLQ Entry",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1790, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/dead_letter_queue",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "add-to-dlq",
+      "name": "Add to DLQ",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2010, 400],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "supabase-auth",
+          "name": "Supabase Service Role"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: 'Audio processing failed', dlq_id: $json.id, message: $('Prepare DLQ Entry').item.json.error_message }) }}",
+        "options": {
+          "responseCode": 422
+        }
+      },
+      "id": "error-response",
+      "name": "Error Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [2230, 400]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{ $('Combine Results').item.json.extracted_entities?.ssn_mentions?.length || 0 }}",
+              "operation": "larger",
+              "value2": 0
+            }
+          ]
+        }
+      },
+      "id": "check-sensitive-data",
+      "name": "Has Sensitive Data?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1570, 500]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/error_notifications",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ resource_type: 'audio', resource_id: $('Validate & Store Audio').item.json.audio_id, severity: 'WARN', message: 'Sensitive data (SSN/Tax ID) detected in audio transcription', details: { ssn_count: $('Combine Results').item.json.extracted_entities?.ssn_mentions?.length || 0, tax_id_count: $('Combine Results').item.json.extracted_entities?.tax_id_mentions?.length || 0 }, notification_channels: ['database', 'email'] }) }}",
+        "options": {}
+      },
+      "id": "log-sensitive-data-alert",
+      "name": "Log Sensitive Data Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1790, 600],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "supabase-auth",
+          "name": "Supabase Service Role"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Parse Audio Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Audio Input": {
+      "main": [
+        [
+          {
+            "node": "OpenAI Whisper Transcription",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Whisper Transcription": {
+      "main": [
+        [
+          {
+            "node": "NLP Entity Extraction",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "NLP Entity Extraction": {
+      "main": [
+        [
+          {
+            "node": "Combine Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Combine Results": {
+      "main": [
+        [
+          {
+            "node": "Validate & Store Audio",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate & Store Audio": {
+      "main": [
+        [
+          {
+            "node": "Check Success",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Has Sensitive Data?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Success": {
+      "main": [
+        [
+          {
+            "node": "Success Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare DLQ Entry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare DLQ Entry": {
+      "main": [
+        [
+          {
+            "node": "Add to DLQ",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Add to DLQ": {
+      "main": [
+        [
+          {
+            "node": "Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Sensitive Data?": {
+      "main": [
+        [
+          {
+            "node": "Log Sensitive Data Alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "error-notifications"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "tax-processing"
+    },
+    {
+      "name": "audio"
+    }
+  ],
+  "triggerCount": 1,
+  "pinData": {}
+}
