@@ -1,0 +1,388 @@
+{
+  "customComponents": [
+    {
+      "name": "StatusBadge",
+      "description": "Display status with appropriate styling",
+      "props": {
+        "status": {
+          "type": "string",
+          "required": true,
+          "options": ["pending", "processing", "completed", "failed", "needs_review"]
+        }
+      },
+      "template": {
+        "type": "span",
+        "class": "status-badge {{status}}",
+        "text": "{{status | capitalize}}"
+      }
+    },
+    {
+      "name": "TypeBadge",
+      "description": "Display document type badge",
+      "props": {
+        "type": {
+          "type": "string",
+          "required": true
+        }
+      },
+      "template": {
+        "type": "span",
+        "class": "type-badge {{type | lowercase | replace(' ', '-')}}",
+        "text": "{{type}}"
+      }
+    },
+    {
+      "name": "StatCard",
+      "description": "Dashboard statistics card",
+      "props": {
+        "title": { "type": "string", "required": true },
+        "value": { "type": "any", "required": true },
+        "icon": { "type": "string", "required": true },
+        "color": { "type": "string", "default": "primary" }
+      },
+      "template": {
+        "type": "div",
+        "class": "stat-card",
+        "children": [
+          {
+            "type": "div",
+            "class": "stat-card-icon {{color}}",
+            "children": [
+              { "type": "icon", "name": "{{icon}}", "size": 24 }
+            ]
+          },
+          {
+            "type": "div",
+            "class": "stat-card-value",
+            "text": "{{value}}"
+          },
+          {
+            "type": "div",
+            "class": "stat-card-label",
+            "text": "{{title}}"
+          }
+        ]
+      }
+    },
+    {
+      "name": "FileItem",
+      "description": "File item in upload list",
+      "props": {
+        "filename": { "type": "string", "required": true },
+        "size": { "type": "number", "required": true },
+        "onRemove": { "type": "function" }
+      },
+      "template": {
+        "type": "div",
+        "class": "file-item flex items-center justify-between p-3 bg-gray-50 rounded-lg",
+        "children": [
+          {
+            "type": "div",
+            "class": "flex items-center gap-3",
+            "children": [
+              { "type": "icon", "name": "{{filename | fileIcon}}", "class": "text-gray-400" },
+              {
+                "type": "div",
+                "children": [
+                  { "type": "span", "class": "font-medium text-gray-900", "text": "{{filename}}" },
+                  { "type": "span", "class": "text-sm text-gray-500 ml-2", "text": "{{size | fileSize}}" }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "button",
+            "class": "text-gray-400 hover:text-red-500",
+            "onClick": "{{onRemove}}",
+            "children": [
+              { "type": "icon", "name": "x", "size": 16 }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "SearchResultCard",
+      "description": "Search result display card",
+      "props": {
+        "document": { "type": "object", "required": true },
+        "similarity": { "type": "number", "required": true },
+        "content": { "type": "string" },
+        "onClick": { "type": "function" }
+      },
+      "template": {
+        "type": "div",
+        "class": "search-result-card",
+        "onClick": "{{onClick}}",
+        "children": [
+          {
+            "type": "div",
+            "class": "search-result-header",
+            "children": [
+              {
+                "type": "div",
+                "children": [
+                  { "type": "span", "class": "search-result-title", "text": "{{document.filename}}" },
+                  { "type": "component", "name": "TypeBadge", "props": { "type": "{{document.type}}" }, "class": "ml-2" }
+                ]
+              },
+              {
+                "type": "span",
+                "class": "search-result-similarity",
+                "text": "{{(similarity * 100).toFixed(1)}}% match"
+              }
+            ]
+          },
+          {
+            "type": "p",
+            "class": "search-result-preview",
+            "text": "{{content | truncate:200}}"
+          }
+        ]
+      }
+    },
+    {
+      "name": "TimelineItem",
+      "description": "Activity timeline item",
+      "props": {
+        "title": { "type": "string", "required": true },
+        "description": { "type": "string" },
+        "time": { "type": "string", "required": true },
+        "status": { "type": "string", "default": "default" }
+      },
+      "template": {
+        "type": "div",
+        "class": "timeline-item {{status}}",
+        "children": [
+          { "type": "div", "class": "timeline-title", "text": "{{title}}" },
+          { "type": "div", "class": "timeline-description", "text": "{{description}}" },
+          { "type": "div", "class": "timeline-time", "text": "{{time | relativeTime}}" }
+        ]
+      }
+    },
+    {
+      "name": "NotificationItem",
+      "description": "Notification panel item",
+      "props": {
+        "severity": { "type": "string", "required": true },
+        "message": { "type": "string", "required": true },
+        "time": { "type": "string", "required": true },
+        "onRead": { "type": "function" }
+      },
+      "template": {
+        "type": "div",
+        "class": "notification-item",
+        "onClick": "{{onRead}}",
+        "children": [
+          {
+            "type": "div",
+            "class": "flex justify-between items-start",
+            "children": [
+              {
+                "type": "span",
+                "class": "severity-badge {{severity | lowercase}}",
+                "text": "{{severity}}"
+              },
+              {
+                "type": "span",
+                "class": "text-xs text-gray-400",
+                "text": "{{time | relativeTime}}"
+              }
+            ]
+          },
+          {
+            "type": "p",
+            "class": "text-sm text-gray-700 mt-2",
+            "text": "{{message}}"
+          }
+        ]
+      }
+    },
+    {
+      "name": "SimilarDocumentItem",
+      "description": "Similar document list item",
+      "props": {
+        "filename": { "type": "string", "required": true },
+        "similarity": { "type": "string", "required": true },
+        "href": { "type": "string", "required": true }
+      },
+      "template": {
+        "type": "a",
+        "href": "{{href}}",
+        "class": "flex items-center justify-between p-3 hover:bg-gray-50 rounded-lg",
+        "children": [
+          {
+            "type": "div",
+            "class": "flex items-center gap-2",
+            "children": [
+              { "type": "icon", "name": "file-text", "class": "text-gray-400", "size": 16 },
+              { "type": "span", "class": "text-sm font-medium text-gray-900", "text": "{{filename}}" }
+            ]
+          },
+          {
+            "type": "span",
+            "class": "text-sm text-gray-500",
+            "text": "{{similarity}}"
+          }
+        ]
+      }
+    },
+    {
+      "name": "InconsistencyItem",
+      "description": "Data inconsistency warning item",
+      "props": {
+        "field": { "type": "string", "required": true },
+        "value": { "type": "any", "required": true },
+        "expectedRange": { "type": "string" },
+        "severity": { "type": "string", "default": "warning" }
+      },
+      "template": {
+        "type": "div",
+        "class": "p-3 bg-yellow-50 rounded-lg border border-yellow-200",
+        "children": [
+          {
+            "type": "div",
+            "class": "flex items-center gap-2",
+            "children": [
+              { "type": "icon", "name": "alert-triangle", "class": "text-yellow-500", "size": 16 },
+              { "type": "span", "class": "font-medium text-yellow-800", "text": "{{field}}" }
+            ]
+          },
+          {
+            "type": "div",
+            "class": "mt-1 text-sm",
+            "children": [
+              { "type": "span", "class": "text-yellow-700", "text": "Value: " },
+              { "type": "span", "class": "font-mono text-yellow-900", "text": "{{value}}" }
+            ]
+          },
+          {
+            "type": "conditional",
+            "condition": "{{expectedRange}}",
+            "children": [
+              {
+                "type": "div",
+                "class": "mt-1 text-sm text-yellow-600",
+                "text": "Expected: {{expectedRange}}"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "DocumentPreview",
+      "description": "Document preview component",
+      "props": {
+        "src": { "type": "string", "required": true },
+        "type": { "type": "string" }
+      },
+      "template": {
+        "type": "div",
+        "class": "document-preview bg-gray-100 rounded-lg p-4 min-h-[400px] flex items-center justify-center",
+        "children": [
+          {
+            "type": "conditional",
+            "condition": "{{src}}",
+            "then": [
+              {
+                "type": "img",
+                "src": "{{supabase.storage.getPublicUrl('documents', src)}}",
+                "class": "max-w-full max-h-[500px] object-contain",
+                "alt": "Document preview"
+              }
+            ],
+            "else": [
+              {
+                "type": "div",
+                "class": "text-center text-gray-500",
+                "children": [
+                  { "type": "icon", "name": "file", "size": 48, "class": "mx-auto mb-4" },
+                  { "type": "p", "text": "No preview available" }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "JsonViewer",
+      "description": "JSON data display component",
+      "props": {
+        "data": { "type": "object", "required": true },
+        "expandLevel": { "type": "number", "default": 1 }
+      },
+      "template": {
+        "type": "div",
+        "class": "json-viewer bg-gray-50 rounded-lg p-4 font-mono text-sm overflow-auto max-h-[400px]",
+        "children": [
+          {
+            "type": "pre",
+            "text": "{{JSON.stringify(data, null, 2)}}"
+          }
+        ]
+      }
+    },
+    {
+      "name": "EmptyState",
+      "description": "Empty state placeholder",
+      "props": {
+        "icon": { "type": "string", "default": "inbox" },
+        "title": { "type": "string", "required": true },
+        "description": { "type": "string" },
+        "action": { "type": "object" }
+      },
+      "template": {
+        "type": "div",
+        "class": "empty-state",
+        "children": [
+          { "type": "icon", "name": "{{icon}}", "size": 64, "class": "empty-state-icon" },
+          { "type": "h3", "class": "empty-state-title", "text": "{{title}}" },
+          {
+            "type": "conditional",
+            "condition": "{{description}}",
+            "children": [
+              { "type": "p", "class": "empty-state-description", "text": "{{description}}" }
+            ]
+          },
+          {
+            "type": "conditional",
+            "condition": "{{action}}",
+            "children": [
+              {
+                "type": "button",
+                "class": "btn btn-primary mt-4",
+                "text": "{{action.text}}",
+                "onClick": "{{action.onClick}}"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "sidebarNavigation": {
+    "items": [
+      { "label": "Dashboard", "icon": "home", "path": "/dashboard" },
+      { "label": "Upload", "icon": "upload", "path": "/upload" },
+      { "label": "Documents", "icon": "file-text", "path": "/documents" },
+      { "label": "Search", "icon": "search", "path": "/search" },
+      { "label": "Audio", "icon": "mic", "path": "/audio" },
+      { "label": "Text", "icon": "file", "path": "/text" }
+    ],
+    "footerItems": [
+      { "label": "Profile", "icon": "user", "path": "/profile" },
+      { "label": "Logout", "icon": "log-out", "action": "logout" }
+    ]
+  },
+  "iconSet": "lucide",
+  "icons": [
+    "home", "upload", "file-text", "search", "mic", "file", "user", "log-out",
+    "check", "x", "clock", "loader", "alert-circle", "alert-triangle",
+    "check-circle", "x-circle", "info", "eye", "refresh-cw", "trash",
+    "download", "upload-cloud", "bell", "settings", "chevron-right",
+    "chevron-down", "chevron-up", "filter", "sort-asc", "sort-desc",
+    "calendar", "image", "music", "inbox"
+  ]
+}

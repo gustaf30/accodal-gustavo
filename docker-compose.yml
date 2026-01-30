@@ -12,6 +12,15 @@ services:
       - NODE_ENV=production
       - WEBHOOK_URL=https://exopoditic-emersyn-unblushing.ngrok-free.dev
       - GENERIC_TIMEZONE=America/Sao_Paulo
+      - N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=false
+      - N8N_COMMUNITY_PACKAGES_ENABLED=true
+      - N8N_PERSONALIZATION_ENABLED=false
+      - N8N_DIAGNOSTICS_ENABLED=false
+      - N8N_EXPOSE_ENV_VARS=SUPABASE_URL,SUPABASE_SERVICE_ROLE_KEY,OPENAI_API_KEY
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
     volumes:
       - n8n_data:/home/node/.n8n
     extra_hosts:

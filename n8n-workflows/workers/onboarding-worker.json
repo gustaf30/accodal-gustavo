@@ -3,24 +3,21 @@
   "nodes": [
     {
       "parameters": {
-        "values": {
-          "values": [
-            {
-              "name": "task",
-              "value": "={{ $execution.customData.task || '{}' }}"
-            }
-          ]
-        }
+        "httpMethod": "POST",
+        "path": "onboarding",
+        "responseMode": "responseNode",
+        "options": {}
       },
-      "id": "input",
-      "name": "Workflow Input",
-      "type": "n8n-nodes-base.set",
-      "typeVersion": 3,
-      "position": [250, 300]
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [250, 300],
+      "webhookId": "onboarding-worker"
     },
     {
       "parameters": {
-        "jsCode": "const taskStr = $input.item.json.task || '{}';\nlet task;\ntry {\n  task = typeof taskStr === 'string' ? JSON.parse(taskStr) : taskStr;\n} catch (e) {\n  task = taskStr;\n}\n\nconst payload = task.payload || task;\n\nreturn {\n  json: {\n    client_name: payload.client_name || payload.name,\n    client_email: payload.email,\n    client_type: payload.client_type || 'individual',\n    industry: payload.industry,\n    business_info: payload.business_info || {},\n    documents: payload.documents || [],\n    user_id: payload.user_id,\n    task_id: task.id\n  }\n};"
+        "jsCode": "// Parse incoming onboarding request\nconst items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const body = item.json.body || item.json;\n  const payload = body.payload || body;\n  \n  results.push({\n    json: {\n      client_name: payload.client_name || payload.name || 'Unknown',\n      client_email: payload.email || payload.client_email,\n      client_type: payload.client_type || 'individual',\n      industry: payload.industry || null,\n      business_info: payload.business_info || {},\n      documents: payload.documents || [],\n      user_id: payload.user_id || null,\n      task_id: body.task_id || null\n    }\n  });\n}\n\nreturn results;"
       },
       "id": "parse-task",
       "name": "Parse Task",
@@ -30,53 +27,20 @@
     },
     {
       "parameters": {
-        "resource": "chat",
-        "model": "gpt-4o-mini",
-        "options": {
-          "maxTokens": 2048,
-          "temperature": 0.2
-        },
-        "messages": {
-          "values": [
-            {
-              "role": "system",
-              "content": "You are an onboarding specialist for a tax preparation service. Analyze the client profile and validate the information provided.\n\nRespond with JSON:\n{\n  \"profile_complete\": true,\n  \"missing_info\": [],\n  \"validation_results\": {\n    \"name_valid\": true,\n    \"email_valid\": true,\n    \"industry_recognized\": true,\n    \"client_type_valid\": true\n  },\n  \"suggested_documents\": [\"W-2\", \"1099-MISC\"],\n  \"risk_flags\": [],\n  \"onboarding_checklist\": [\n    {\"item\": \"Verify identity\", \"status\": \"pending\"},\n    {\"item\": \"Collect tax documents\", \"status\": \"pending\"}\n  ],\n  \"recommendations\": []\n}"
-            },
-            {
-              "role": "user",
-              "content": "Analyze this client profile for onboarding:\n\nClient Name: {{ $json.client_name }}\nEmail: {{ $json.client_email }}\nClient Type: {{ $json.client_type }}\nIndustry: {{ $json.industry || 'Not specified' }}\nBusiness Info: {{ JSON.stringify($json.business_info) }}\nDocuments Provided: {{ $json.documents.length }} document(s)"
-            }
-          ]
-        }
+        "jsCode": "// Prepare OpenAI payload for client profile analysis\nconst items = $input.all();\nconst results = [];\n\nconst systemPrompt = `You are an onboarding specialist for a tax preparation service. Analyze the client profile and validate the information provided.\n\nRespond ONLY with valid JSON:\n{\n  \"profile_complete\": true,\n  \"missing_info\": [],\n  \"validation_results\": {\n    \"name_valid\": true,\n    \"email_valid\": true,\n    \"industry_recognized\": true,\n    \"client_type_valid\": true\n  },\n  \"suggested_documents\": [\"W-2\", \"1099-MISC\"],\n  \"risk_flags\": [],\n  \"onboarding_checklist\": [\n    {\"item\": \"Verify identity\", \"status\": \"pending\"},\n    {\"item\": \"Collect tax documents\", \"status\": \"pending\"}\n  ],\n  \"recommendations\": []\n}`;\n\nfor (const item of items) {\n  const data = item.json;\n  \n  const userMessage = `Analyze this client profile for onboarding:\n\nClient Name: ${data.client_name}\nEmail: ${data.client_email || 'Not provided'}\nClient Type: ${data.client_type}\nIndustry: ${data.industry || 'Not specified'}\nBusiness Info: ${JSON.stringify(data.business_info)}\nDocuments Provided: ${data.documents.length} document(s)`;\n  \n  results.push({\n    json: {\n      ...data,\n      openai_payload: {\n        model: 'gpt-4o-mini',\n        messages: [\n          { role: 'system', content: systemPrompt },\n          { role: 'user', content: userMessage }\n        ],\n        max_tokens: 2048,\n        temperature: 0.2\n      }\n    }\n  });\n}\n\nreturn results;"
       },
-      "id": "analyze-profile",
-      "name": "Analyze Client Profile",
-      "type": "@n8n/n8n-nodes-langchain.openAi",
-      "typeVersion": 1,
-      "position": [690, 300],
-      "credentials": {
-        "openAiApi": {
-          "id": "openai-credentials",
-          "name": "OpenAI API"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "jsCode": "const item = $input.item;\nconst inputData = $('Parse Task').item.json;\n\nlet analysis;\ntry {\n  let text = item.json.message?.content || item.json.text || '{}';\n  if (text.includes('```')) {\n    text = text.replace(/```json\\n?/g, '').replace(/```\\n?/g, '');\n  }\n  analysis = JSON.parse(text.trim());\n} catch (e) {\n  analysis = { profile_complete: false, parse_error: e.message };\n}\n\nreturn {\n  json: {\n    client_name: inputData.client_name,\n    client_email: inputData.client_email,\n    client_type: inputData.client_type,\n    user_id: inputData.user_id,\n    task_id: inputData.task_id,\n    analysis: analysis,\n    onboarding_status: analysis.profile_complete ? 'ready' : 'incomplete'\n  }\n};"
-      },
-      "id": "process-analysis",
-      "name": "Process Analysis",
+      "id": "prepare-openai-payload",
+      "name": "Prepare OpenAI Payload",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [910, 300]
+      "position": [690, 300]
     },
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $env.SUPABASE_URL }}/rest/v1/processing_logs",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -88,34 +52,85 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ resource_type: 'workflow', resource_id: $json.task_id, user_id: $json.user_id, action: 'client_onboarding', status: $json.onboarding_status === 'ready' ? 'completed' : 'pending', details: { client_name: $json.client_name, client_type: $json.client_type, analysis: $json.analysis } }) }}",
+        "jsonBody": "={{ JSON.stringify($json.openai_payload) }}",
         "options": {}
       },
-      "id": "log-onboarding",
-      "name": "Log Onboarding",
+      "id": "analyze-profile",
+      "name": "Analyze Client Profile",
       "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4,
-      "position": [1130, 300],
+      "typeVersion": 4.2,
+      "position": [910, 300],
       "credentials": {
         "httpHeaderAuth": {
-          "id": "supabase-auth",
-          "name": "Supabase Service Role"
+          "id": "openai-credential",
+          "name": "OpenAI API Key"
         }
       }
     },
     {
       "parameters": {
-        "jsCode": "const data = $('Process Analysis').item.json;\n\nreturn {\n  json: {\n    success: true,\n    task_id: data.task_id,\n    client_name: data.client_name,\n    onboarding_status: data.onboarding_status,\n    profile_complete: data.analysis.profile_complete,\n    missing_info: data.analysis.missing_info,\n    suggested_documents: data.analysis.suggested_documents,\n    checklist: data.analysis.onboarding_checklist\n  }\n};"
+        "jsCode": "// Process OpenAI analysis response\nconst items = $input.all();\nconst prevItems = $('Prepare OpenAI Payload').all();\nconst results = [];\n\nfor (let i = 0; i < items.length; i++) {\n  const item = items[i];\n  const inputData = prevItems[i].json;\n  \n  let analysis;\n  try {\n    let text = item.json.choices?.[0]?.message?.content || '{}';\n    if (text.includes('```json')) {\n      text = text.replace(/```json\\n?/g, '').replace(/```\\n?/g, '');\n    } else if (text.includes('```')) {\n      text = text.replace(/```\\n?/g, '');\n    }\n    analysis = JSON.parse(text.trim());\n  } catch (e) {\n    analysis = { \n      profile_complete: false, \n      parse_error: e.message,\n      missing_info: ['Unable to analyze profile'],\n      validation_results: {},\n      suggested_documents: ['W-2', '1099'],\n      onboarding_checklist: []\n    };\n  }\n  \n  results.push({\n    json: {\n      client_name: inputData.client_name,\n      client_email: inputData.client_email,\n      client_type: inputData.client_type,\n      user_id: inputData.user_id,\n      task_id: inputData.task_id,\n      analysis: analysis,\n      onboarding_status: analysis.profile_complete ? 'ready' : 'incomplete'\n    }\n  });\n}\n\nreturn results;"
       },
-      "id": "format-output",
-      "name": "Format Output",
+      "id": "process-analysis",
+      "name": "Process Analysis",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1350, 300]
+      "position": [1130, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/processing_logs",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "apikey",
+              "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxreWl4YWlwcGRtdGp5aXp0dXp3Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2OTcwMjY4OSwiZXhwIjoyMDg1Mjc4Njg5fQ.nD4GhFIFXs-1qvdc42vAO1uumgTfGgiABsB9OgrOJHo"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ resource_type: 'workflow', resource_id: $json.task_id || '00000000-0000-0000-0000-000000000000', user_id: $json.user_id, action: 'client_onboarding', status: $json.onboarding_status === 'ready' ? 'completed' : 'started', details: { client_name: $json.client_name, client_type: $json.client_type, analysis_summary: { profile_complete: $json.analysis.profile_complete, missing_info_count: ($json.analysis.missing_info || []).length } } }) }}",
+        "options": {}
+      },
+      "id": "log-onboarding",
+      "name": "Log Onboarding",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1350, 300],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "supabase-credential",
+          "name": "Supabase Service Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: true, task_id: $('Process Analysis').first().json.task_id, client_name: $('Process Analysis').first().json.client_name, onboarding_status: $('Process Analysis').first().json.onboarding_status, profile_complete: $('Process Analysis').first().json.analysis.profile_complete, missing_info: $('Process Analysis').first().json.analysis.missing_info || [], suggested_documents: $('Process Analysis').first().json.analysis.suggested_documents || [], checklist: $('Process Analysis').first().json.analysis.onboarding_checklist || [] }) }}"
+      },
+      "id": "success-response",
+      "name": "Success Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1570, 300]
     }
   ],
   "connections": {
-    "Workflow Input": {
+    "Webhook Trigger": {
       "main": [
         [
           {
@@ -127,6 +142,17 @@
       ]
     },
     "Parse Task": {
+      "main": [
+        [
+          {
+            "node": "Prepare OpenAI Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare OpenAI Payload": {
       "main": [
         [
           {
@@ -163,7 +189,7 @@
       "main": [
         [
           {
-            "node": "Format Output",
+            "node": "Success Response",
             "type": "main",
             "index": 0
           }
@@ -174,18 +200,10 @@
   "settings": {
     "executionOrder": "v1",
     "saveManualExecutions": true,
-    "callerPolicy": "workflowsFromSameOwner",
-    "errorWorkflow": "error-notifications"
+    "callerPolicy": "workflowsFromSameOwner"
   },
   "staticData": null,
-  "tags": [
-    {
-      "name": "worker"
-    },
-    {
-      "name": "onboarding"
-    }
-  ],
-  "triggerCount": 0,
+  "tags": [],
+  "triggerCount": 1,
   "pinData": {}
 }

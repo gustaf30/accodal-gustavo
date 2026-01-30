@@ -154,7 +154,7 @@ export async function handleBuildTaxonomy(
 export async function handleClassifyWebhook(
   req: Request,
   res: Response,
-  next: NextFunction
+  _next: NextFunction
 ): Promise<void> {
   try {
     const payload = req.body;

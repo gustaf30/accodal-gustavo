@@ -5,6 +5,7 @@
       "parameters": {
         "httpMethod": "POST",
         "path": "error-webhook",
+        "responseMode": "responseNode",
         "options": {}
       },
       "id": "error-webhook",
@@ -16,10 +17,10 @@
     },
     {
       "parameters": {
-        "jsCode": "// Parse and enrich error data\nconst item = $input.item;\nconst error = item.json.body || item.json;\n\n// Determine severity\nlet severity = error.severity || 'ERROR';\nif (error.message?.toLowerCase().includes('critical') || error.retry_count >= 5) {\n  severity = 'CRITICAL';\n} else if (error.message?.toLowerCase().includes('warn')) {\n  severity = 'WARN';\n}\n\n// Build notification payload\nconst notification = {\n  severity,\n  resource_type: error.resource_type || error.workflow || 'unknown',\n  resource_id: error.resource_id || error.execution_id || null,\n  message: error.message || error.error || 'Unknown error occurred',\n  details: {\n    workflow: error.workflow,\n    node: error.node,\n    execution_id: error.execution_id,\n    timestamp: new Date().toISOString(),\n    stack_trace: error.stack,\n    context: error.context || {}\n  },\n  notification_channels: []\n};\n\n// Route based on severity\nswitch (severity) {\n  case 'CRITICAL':\n    notification.notification_channels = ['database', 'slack', 'email'];\n    break;\n  case 'ERROR':\n    notification.notification_channels = ['database', 'slack'];\n    break;\n  case 'WARN':\n    notification.notification_channels = ['database'];\n    break;\n  default:\n    notification.notification_channels = ['database'];\n}\n\nreturn { json: notification };"
+        "jsCode": "// Parse and enrich error data\nconst items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const error = item.json.body || item.json;\n  \n  // Determine severity\n  let severity = error.severity || 'ERROR';\n  if (error.message && error.message.toLowerCase().includes('critical')) {\n    severity = 'CRITICAL';\n  } else if (error.message && error.message.toLowerCase().includes('warn')) {\n    severity = 'WARN';\n  }\n  \n  // Build notification payload\n  const notification = {\n    severity,\n    resource_type: error.resource_type || error.workflow || 'unknown',\n    resource_id: error.resource_id || null,\n    message: error.message || error.error || 'Unknown error occurred',\n    details: {\n      workflow: error.workflow,\n      node: error.node,\n      timestamp: new Date().toISOString(),\n      context: error.context || {}\n    },\n    notification_channels: ['database']\n  };\n  \n  // Add more channels for critical errors\n  if (severity === 'CRITICAL') {\n    notification.notification_channels.push('email');\n  }\n  \n  results.push({ json: notification });\n}\n\nreturn results;"
       },
       "id": "parse-error",
-      "name": "Parse & Enrich Error",
+      "name": "Parse Error",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [470, 300]
@@ -27,15 +28,19 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $env.SUPABASE_URL }}/rest/v1/error_notifications",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
+        "url": "https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/error_notifications",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
             {
               "name": "Content-Type",
               "value": "application/json"
+            },
+            {
+              "name": "apikey",
+              "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxreWl4YWlwcGRtdGp5aXp0dXp3Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2OTcwMjY4OSwiZXhwIjoyMDg1Mjc4Njg5fQ.nD4GhFIFXs-1qvdc42vAO1uumgTfGgiABsB9OgrOJHo"
             },
             {
               "name": "Prefer",
@@ -51,153 +56,64 @@
       "id": "log-to-database",
       "name": "Log to Database",
       "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4,
+      "typeVersion": 4.2,
       "position": [690, 300],
       "credentials": {
         "httpHeaderAuth": {
-          "id": "supabase-auth",
-          "name": "Supabase Service Role"
+          "id": "supabase-credential",
+          "name": "Supabase Service Key"
         }
       }
     },
     {
       "parameters": {
         "conditions": {
-          "boolean": [
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
             {
-              "value1": "={{ $('Parse & Enrich Error').item.json.notification_channels.includes('slack') }}",
-              "value2": true
+              "id": "condition-critical",
+              "leftValue": "={{ $('Parse Error').first().json.severity }}",
+              "rightValue": "CRITICAL",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
             }
-          ]
-        }
-      },
-      "id": "should-slack",
-      "name": "Should Slack?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 1,
-      "position": [910, 200]
-    },
-    {
-      "parameters": {
-        "conditions": {
-          "boolean": [
-            {
-              "value1": "={{ $('Parse & Enrich Error').item.json.notification_channels.includes('email') }}",
-              "value2": true
-            }
-          ]
-        }
-      },
-      "id": "should-email",
-      "name": "Should Email?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 1,
-      "position": [910, 400]
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "={{ $env.SLACK_WEBHOOK_URL }}",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            }
-          ]
+          ],
+          "combinator": "and"
         },
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ blocks: [ { type: 'header', text: { type: 'plain_text', text: ($('Parse & Enrich Error').item.json.severity === 'CRITICAL' ? '🚨' : '⚠️') + ' ' + $('Parse & Enrich Error').item.json.severity + ' Alert', emoji: true } }, { type: 'section', fields: [ { type: 'mrkdwn', text: '*Resource:*\\n' + $('Parse & Enrich Error').item.json.resource_type }, { type: 'mrkdwn', text: '*Time:*\\n' + new Date().toISOString() } ] }, { type: 'section', text: { type: 'mrkdwn', text: '*Message:*\\n' + $('Parse & Enrich Error').item.json.message } }, { type: 'context', elements: [ { type: 'mrkdwn', text: 'Workflow: ' + ($('Parse & Enrich Error').item.json.details.workflow || 'N/A') + ' | Node: ' + ($('Parse & Enrich Error').item.json.details.node || 'N/A') } ] } ] }) }}",
         "options": {}
       },
-      "id": "send-slack",
-      "name": "Send Slack Alert",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4,
-      "position": [1130, 100],
-      "continueOnFail": true
-    },
-    {
-      "parameters": {
-        "fromEmail": "={{ $env.NOTIFICATION_EMAIL_FROM || 'alerts@taxprocessing.com' }}",
-        "toEmail": "={{ $env.NOTIFICATION_EMAIL_TO || 'admin@taxprocessing.com' }}",
-        "subject": "={{ $('Parse & Enrich Error').item.json.severity }} Alert: {{ $('Parse & Enrich Error').item.json.resource_type }} - {{ $('Parse & Enrich Error').item.json.message.substring(0, 50) }}",
-        "emailType": "html",
-        "html": "=<html>\n<body style=\"font-family: Arial, sans-serif; padding: 20px;\">\n  <div style=\"background: {{ $('Parse & Enrich Error').item.json.severity === 'CRITICAL' ? '#dc3545' : '#ffc107' }}; color: white; padding: 15px; border-radius: 5px;\">\n    <h2>{{ $('Parse & Enrich Error').item.json.severity }} Alert</h2>\n  </div>\n  <div style=\"padding: 20px; border: 1px solid #ddd; margin-top: 10px; border-radius: 5px;\">\n    <p><strong>Resource Type:</strong> {{ $('Parse & Enrich Error').item.json.resource_type }}</p>\n    <p><strong>Resource ID:</strong> {{ $('Parse & Enrich Error').item.json.resource_id || 'N/A' }}</p>\n    <p><strong>Message:</strong></p>\n    <pre style=\"background: #f5f5f5; padding: 10px; border-radius: 3px;\">{{ $('Parse & Enrich Error').item.json.message }}</pre>\n    <p><strong>Timestamp:</strong> {{ $('Parse & Enrich Error').item.json.details.timestamp }}</p>\n    <p><strong>Workflow:</strong> {{ $('Parse & Enrich Error').item.json.details.workflow || 'N/A' }}</p>\n    <p><strong>Node:</strong> {{ $('Parse & Enrich Error').item.json.details.node || 'N/A' }}</p>\n  </div>\n</body>\n</html>"
-      },
-      "id": "send-email",
-      "name": "Send Email Alert",
-      "type": "n8n-nodes-base.sendEmail",
+      "id": "is-critical",
+      "name": "Is Critical",
+      "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [1130, 300],
-      "continueOnFail": true,
-      "credentials": {
-        "smtp": {
-          "id": "smtp-credentials",
-          "name": "SMTP"
-        }
-      }
-    },
-    {
-      "parameters": {},
-      "id": "merge-results",
-      "name": "Merge Results",
-      "type": "n8n-nodes-base.merge",
-      "typeVersion": 2,
-      "position": [1350, 200],
-      "parameters": {
-        "mode": "combine",
-        "combinationMode": "mergeByPosition"
-      }
+      "position": [910, 300]
     },
     {
       "parameters": {
-        "method": "PATCH",
-        "url": "={{ $env.SUPABASE_URL }}/rest/v1/error_notifications?id=eq.{{ $('Log to Database').item.json[0].id }}",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            }
-          ]
-        },
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ details: { ...$('Parse & Enrich Error').item.json.details, slack_sent: $('Send Slack Alert').item?.json ? true : false, email_sent: $('Send Email Alert').item?.json ? true : false } }) }}",
-        "options": {}
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: true, notification_id: $('Log to Database').first().json[0]?.id, severity: $('Parse Error').first().json.severity, critical: true, message: 'Critical error logged and escalated' }) }}"
       },
-      "id": "update-notification-status",
-      "name": "Update Notification Status",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4,
-      "position": [1570, 200],
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "supabase-auth",
-          "name": "Supabase Service Role"
-        }
-      }
-    },
-    {
-      "parameters": {},
-      "id": "no-slack",
-      "name": "No Slack",
-      "type": "n8n-nodes-base.noOp",
-      "typeVersion": 1,
+      "id": "critical-response",
+      "name": "Critical Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
       "position": [1130, 200]
     },
     {
-      "parameters": {},
-      "id": "no-email",
-      "name": "No Email",
-      "type": "n8n-nodes-base.noOp",
-      "typeVersion": 1,
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: true, notification_id: $('Log to Database').first().json[0]?.id, severity: $('Parse Error').first().json.severity }) }}"
+      },
+      "id": "normal-response",
+      "name": "Normal Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
       "position": [1130, 400]
     }
   ],
@@ -206,14 +122,14 @@
       "main": [
         [
           {
-            "node": "Parse & Enrich Error",
+            "node": "Parse Error",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Parse & Enrich Error": {
+    "Parse Error": {
       "main": [
         [
           {
@@ -228,103 +144,25 @@
       "main": [
         [
           {
-            "node": "Should Slack?",
-            "type": "main",
-            "index": 0
-          },
-          {
-            "node": "Should Email?",
+            "node": "Is Critical",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Should Slack?": {
+    "Is Critical": {
       "main": [
         [
           {
-            "node": "Send Slack Alert",
+            "node": "Critical Response",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "No Slack",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Should Email?": {
-      "main": [
-        [
-          {
-            "node": "Send Email Alert",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "No Email",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Send Slack Alert": {
-      "main": [
-        [
-          {
-            "node": "Merge Results",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "No Slack": {
-      "main": [
-        [
-          {
-            "node": "Merge Results",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Send Email Alert": {
-      "main": [
-        [
-          {
-            "node": "Merge Results",
-            "type": "main",
-            "index": 1
-          }
-        ]
-      ]
-    },
-    "No Email": {
-      "main": [
-        [
-          {
-            "node": "Merge Results",
-            "type": "main",
-            "index": 1
-          }
-        ]
-      ]
-    },
-    "Merge Results": {
-      "main": [
-        [
-          {
-            "node": "Update Notification Status",
+            "node": "Normal Response",
             "type": "main",
             "index": 0
           }
@@ -338,14 +176,7 @@
     "callerPolicy": "workflowsFromSameOwner"
   },
   "staticData": null,
-  "tags": [
-    {
-      "name": "error-handling"
-    },
-    {
-      "name": "notifications"
-    }
-  ],
+  "tags": [],
   "triggerCount": 1,
   "pinData": {}
 }

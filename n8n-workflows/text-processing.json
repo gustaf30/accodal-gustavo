@@ -17,258 +17,156 @@
     },
     {
       "parameters": {
-        "pollTimes": {
-          "item": [
-            {
-              "mode": "everyMinute"
-            }
-          ]
-        },
-        "filters": {
-          "includeSpamTrash": false,
-          "readStatus": "unread",
-          "receivedAfter": "={{ $now.minus({ hours: 24 }).toISO() }}"
-        }
-      },
-      "id": "email-trigger",
-      "name": "Email Inbox Monitor",
-      "type": "n8n-nodes-base.gmailTrigger",
-      "typeVersion": 1,
-      "position": [250, 500],
-      "credentials": {
-        "gmailOAuth2": {
-          "id": "gmail-credentials",
-          "name": "Gmail OAuth2"
-        }
-      },
-      "disabled": true
-    },
-    {
-      "parameters": {
-        "jsCode": "// Normalize input from different sources\nconst items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const data = item.json.body || item.json;\n  \n  let textData = {\n    source: data.source || 'api',\n    source_identifier: data.source_identifier || data.messageId || data.id || null,\n    subject: data.subject || null,\n    content: data.content || data.text || data.body || data.snippet || '',\n    user_id: data.user_id || null,\n    metadata: data.metadata || {}\n  };\n  \n  // Handle email-specific fields\n  if (data.from || data.sender) {\n    textData.source = 'email';\n    textData.metadata.from = data.from || data.sender;\n    textData.metadata.to = data.to || data.recipient;\n    textData.metadata.date = data.date || data.internalDate;\n  }\n  \n  if (!textData.content || textData.content.trim().length === 0) {\n    throw new Error('Content is required and cannot be empty');\n  }\n  \n  results.push({ json: textData });\n}\n\nreturn results;"
+        "jsCode": "// Normalize input from different sources\nconst items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const data = item.json.body || item.json;\n  \n  let textData = {\n    source: data.source || 'api',\n    source_identifier: data.source_identifier || data.messageId || data.id || null,\n    subject: data.subject || null,\n    content: data.content || data.text || data.body || data.snippet || '',\n    user_id: data.user_id || null,\n    metadata: data.metadata || {}\n  };\n  \n  if (data.from || data.sender) {\n    textData.source = 'email';\n    textData.metadata.from = data.from || data.sender;\n    textData.metadata.to = data.to || data.recipient;\n    textData.metadata.date = data.date || data.internalDate;\n  }\n  \n  if (!textData.content || textData.content.trim().length === 0) {\n    throw new Error('Content is required and cannot be empty');\n  }\n  \n  results.push({ json: textData });\n}\n\nreturn results;"
       },
       "id": "normalize-input",
       "name": "Normalize Input",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [470, 400]
+      "position": [470, 300]
     },
     {
       "parameters": {
-        "resource": "chat",
-        "model": "gpt-4o-mini",
-        "options": {
-          "maxTokens": 3000,
-          "temperature": 0.1
-        },
-        "messages": {
-          "values": [
+        "jsCode": "// Prepare OpenAI API payload\nconst items = $input.all();\nconst results = [];\n\nconst systemPrompt = `You are a financial document and communication analyst. Analyze the provided text and extract all relevant financial and tax-related information.\n\nRespond ONLY with valid JSON in this format:\n{\n  \"document_type\": \"email|letter|statement|memo|other\",\n  \"category\": \"tax_inquiry|document_request|payment_info|account_update|general|other\",\n  \"urgency\": \"high|medium|low\",\n  \"extracted_data\": {\n    \"amounts\": [{\"value\": 1000.00, \"currency\": \"USD\", \"context\": \"tax refund\"}],\n    \"dates\": [{\"date\": \"2024-04-15\", \"context\": \"filing deadline\"}],\n    \"ssn_mentions\": [\"XXX-XX-1234\"],\n    \"tax_id_mentions\": [\"XX-XXX1234\"],\n    \"names\": [\"John Smith\"],\n    \"companies\": [\"IRS\", \"Acme Corp\"],\n    \"addresses\": [],\n    \"phone_numbers\": [],\n    \"email_addresses\": [],\n    \"document_references\": [\"W-2\", \"Form 1040\"],\n    \"account_numbers\": []\n  },\n  \"action_items\": [\"Submit W-2 by April 15\"],\n  \"sentiment\": \"neutral|positive|negative|urgent\",\n  \"summary\": \"Brief summary of the content\",\n  \"key_points\": [\"Point 1\", \"Point 2\"]\n}`;\n\nfor (const item of items) {\n  const data = item.json;\n  \n  const userContent = 'Analyze this ' + data.source + ' content:\\n\\nSubject: ' + (data.subject || 'N/A') + '\\n\\nContent:\\n' + data.content;\n  \n  results.push({\n    json: {\n      ...data,\n      openai_payload: {\n        model: 'gpt-4o-mini',\n        messages: [\n          { role: 'system', content: systemPrompt },\n          { role: 'user', content: userContent }\n        ],\n        max_tokens: 3000,\n        temperature: 0.1\n      }\n    }\n  });\n}\n\nreturn results;"
+      },
+      "id": "prepare-openai-payload",
+      "name": "Prepare OpenAI Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [690, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
             {
-              "role": "system",
-              "content": "You are a financial document and communication analyst. Analyze the provided text and extract all relevant financial and tax-related information.\n\nRespond ONLY with valid JSON in this format:\n{\n  \"document_type\": \"email|letter|statement|memo|other\",\n  \"category\": \"tax_inquiry|document_request|payment_info|account_update|general|other\",\n  \"urgency\": \"high|medium|low\",\n  \"extracted_data\": {\n    \"amounts\": [{\"value\": 1000.00, \"currency\": \"USD\", \"context\": \"tax refund\"}],\n    \"dates\": [{\"date\": \"2024-04-15\", \"context\": \"filing deadline\"}],\n    \"ssn_mentions\": [\"XXX-XX-1234\"],\n    \"tax_id_mentions\": [\"XX-XXX1234\"],\n    \"names\": [\"John Smith\"],\n    \"companies\": [\"IRS\", \"Acme Corp\"],\n    \"addresses\": [],\n    \"phone_numbers\": [],\n    \"email_addresses\": [],\n    \"document_references\": [\"W-2\", \"Form 1040\"],\n    \"account_numbers\": []\n  },\n  \"action_items\": [\"Submit W-2 by April 15\"],\n  \"sentiment\": \"neutral|positive|negative|urgent\",\n  \"summary\": \"Brief summary of the content\",\n  \"key_points\": [\"Point 1\", \"Point 2\"]\n}"
-            },
-            {
-              "role": "user",
-              "content": "Analyze this {{ $json.source }} content:\n\nSubject: {{ $json.subject || 'N/A' }}\n\nContent:\n{{ $json.content }}"
+              "name": "Content-Type",
+              "value": "application/json"
             }
           ]
-        }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.openai_payload) }}",
+        "options": {}
       },
-      "id": "openai-extraction",
+      "id": "openai-request",
       "name": "OpenAI Text Analysis",
-      "type": "@n8n/n8n-nodes-langchain.openAi",
-      "typeVersion": 1,
-      "position": [690, 400],
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [910, 300],
       "credentials": {
-        "openAiApi": {
-          "id": "openai-credentials",
-          "name": "OpenAI API"
+        "httpHeaderAuth": {
+          "id": "openai-credential",
+          "name": "OpenAI API Key"
         }
-      },
-      "retryOnFail": true,
-      "maxTries": 2
+      }
     },
     {
       "parameters": {
-        "jsCode": "// Process extraction results\nconst items = $input.all();\nconst results = [];\n\nfor (let i = 0; i < items.length; i++) {\n  const item = items[i];\n  const inputData = $('Normalize Input').item(i).json;\n  \n  let extraction;\n  try {\n    let responseText = item.json.message?.content || item.json.text || '{}';\n    \n    // Handle markdown code blocks\n    if (responseText.includes('```json')) {\n      responseText = responseText.replace(/```json\\n?/g, '').replace(/```\\n?/g, '');\n    } else if (responseText.includes('```')) {\n      responseText = responseText.replace(/```\\n?/g, '');\n    }\n    \n    extraction = JSON.parse(responseText.trim());\n  } catch (e) {\n    extraction = {\n      document_type: 'other',\n      category: 'other',\n      urgency: 'low',\n      extracted_data: {},\n      action_items: [],\n      sentiment: 'neutral',\n      summary: 'Extraction failed',\n      key_points: [],\n      parse_error: e.message\n    };\n  }\n  \n  // Mask sensitive data in content\n  let maskedContent = inputData.content;\n  maskedContent = maskedContent.replace(/\\b\\d{3}[-\\s]?\\d{2}[-\\s]?\\d{4}\\b/g, '[SSN REDACTED]');\n  maskedContent = maskedContent.replace(/\\b\\d{2}[-\\s]?\\d{7}\\b/g, '[EIN REDACTED]');\n  \n  results.push({\n    json: {\n      source: inputData.source,\n      source_identifier: inputData.source_identifier,\n      subject: inputData.subject,\n      content: maskedContent,\n      user_id: inputData.user_id,\n      extracted_data: extraction,\n      entities: extraction.extracted_data || {},\n      metadata: {\n        ...inputData.metadata,\n        document_type: extraction.document_type,\n        category: extraction.category,\n        urgency: extraction.urgency,\n        sentiment: extraction.sentiment\n      }\n    }\n  });\n}\n\nreturn results;"
+        "jsCode": "// Process extraction results from OpenAI\nconst items = $input.all();\nconst prevItems = $('Prepare OpenAI Payload').all();\nconst results = [];\n\nfor (let i = 0; i < items.length; i++) {\n  const item = items[i];\n  const inputData = prevItems[i].json;\n  \n  let extraction;\n  try {\n    let responseText = item.json.choices?.[0]?.message?.content || '{}';\n    \n    if (responseText.includes('```json')) {\n      responseText = responseText.replace(/```json\\n?/g, '').replace(/```\\n?/g, '');\n    } else if (responseText.includes('```')) {\n      responseText = responseText.replace(/```\\n?/g, '');\n    }\n    \n    extraction = JSON.parse(responseText.trim());\n  } catch (e) {\n    extraction = {\n      document_type: 'other',\n      category: 'other',\n      urgency: 'low',\n      extracted_data: {},\n      action_items: [],\n      sentiment: 'neutral',\n      summary: 'Extraction failed',\n      key_points: [],\n      parse_error: e.message\n    };\n  }\n  \n  let maskedContent = inputData.content || '';\n  maskedContent = maskedContent.replace(/\\b\\d{3}[-\\s]?\\d{2}[-\\s]?\\d{4}\\b/g, '[SSN REDACTED]');\n  maskedContent = maskedContent.replace(/\\b\\d{2}[-\\s]?\\d{7}\\b/g, '[EIN REDACTED]');\n  \n  results.push({\n    json: {\n      source: inputData.source,\n      source_identifier: inputData.source_identifier,\n      subject: inputData.subject,\n      content: maskedContent,\n      user_id: inputData.user_id,\n      extracted_data: extraction,\n      entities: extraction.extracted_data || {},\n      metadata: {\n        ...inputData.metadata,\n        document_type: extraction.document_type,\n        category: extraction.category,\n        urgency: extraction.urgency,\n        sentiment: extraction.sentiment\n      }\n    }\n  });\n}\n\nreturn results;"
       },
       "id": "process-extraction",
       "name": "Process Extraction",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [910, 400]
+      "position": [1130, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare Supabase payload\nconst items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const data = item.json;\n  results.push({\n    json: {\n      ...data,\n      supabase_payload: {\n        text: {\n          source: data.source,\n          source_identifier: data.source_identifier,\n          subject: data.subject,\n          content: data.content,\n          extracted_data: data.extracted_data\n        },\n        user_id: data.user_id\n      }\n    }\n  });\n}\n\nreturn results;"
+      },
+      "id": "prepare-supabase-payload",
+      "name": "Prepare Supabase Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1350, 300]
     },
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $env.SUPABASE_URL }}/functions/v1/validate-text",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
+        "url": "https://lkyixaippdmtjyiztuzw.supabase.co/functions/v1/validate-text",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
             {
               "name": "Content-Type",
               "value": "application/json"
+            },
+            {
+              "name": "apikey",
+              "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxreWl4YWlwcGRtdGp5aXp0dXp3Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2OTcwMjY4OSwiZXhwIjoyMDg1Mjc4Njg5fQ.nD4GhFIFXs-1qvdc42vAO1uumgTfGgiABsB9OgrOJHo"
             }
           ]
         },
         "sendBody": true,
-        "bodyParameters": {
-          "parameters": [
-            {
-              "name": "text",
-              "value": "={{ JSON.stringify({ source: $json.source, source_identifier: $json.source_identifier, subject: $json.subject, content: $json.content, extracted_data: $json.extracted_data }) }}"
-            },
-            {
-              "name": "user_id",
-              "value": "={{ $json.user_id }}"
-            }
-          ]
-        },
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.supabase_payload) }}",
         "options": {}
       },
       "id": "store-in-supabase",
       "name": "Validate & Store Text",
       "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4,
-      "position": [1130, 400],
+      "typeVersion": 4.2,
+      "position": [1570, 300],
       "credentials": {
         "httpHeaderAuth": {
-          "id": "supabase-auth",
-          "name": "Supabase Service Role"
+          "id": "supabase-credential",
+          "name": "Supabase Service Key"
         }
-      },
-      "retryOnFail": true,
-      "maxTries": 3
+      }
     },
     {
       "parameters": {
         "conditions": {
-          "boolean": [
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
             {
-              "value1": "={{ $json.success }}",
-              "value2": true
+              "id": "condition-success",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
             }
-          ]
-        }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
       },
       "id": "check-success",
       "name": "Check Success",
       "type": "n8n-nodes-base.if",
-      "typeVersion": 1,
-      "position": [1350, 400]
-    },
-    {
-      "parameters": {
-        "conditions": {
-          "string": [
-            {
-              "value1": "={{ $('Process Extraction').item.json.extracted_data.urgency }}",
-              "value2": "high"
-            }
-          ]
-        }
-      },
-      "id": "check-urgency",
-      "name": "Is Urgent?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 1,
-      "position": [1570, 300]
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "={{ $env.SUPABASE_URL }}/rest/v1/error_notifications",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            }
-          ]
-        },
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ resource_type: 'text', resource_id: $('Validate & Store Text').item.json.text_id, severity: 'WARN', message: 'Urgent communication received: ' + ($('Process Extraction').item.json.extracted_data.summary || 'No summary'), details: { category: $('Process Extraction').item.json.extracted_data.category, action_items: $('Process Extraction').item.json.extracted_data.action_items }, notification_channels: ['database', 'slack', 'email'] }) }}",
-        "options": {}
-      },
-      "id": "urgent-notification",
-      "name": "Send Urgent Notification",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4,
-      "position": [1790, 200],
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "supabase-auth",
-          "name": "Supabase Service Role"
-        }
-      }
+      "typeVersion": 2,
+      "position": [1790, 300]
     },
     {
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ JSON.stringify({ success: true, text_id: $('Validate & Store Text').item.json.text_id, warnings: $('Validate & Store Text').item.json.warnings, extraction: { category: $('Process Extraction').item.json.extracted_data.category, urgency: $('Process Extraction').item.json.extracted_data.urgency, summary: $('Process Extraction').item.json.extracted_data.summary, action_items: $('Process Extraction').item.json.extracted_data.action_items } }) }}"
+        "responseBody": "={{ JSON.stringify({ success: true, text_id: $json.text_id, warnings: $json.warnings, extraction: $('Process Extraction').first().json.extracted_data }) }}"
       },
       "id": "success-response",
       "name": "Success Response",
       "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1,
-      "position": [2010, 300]
-    },
-    {
-      "parameters": {
-        "jsCode": "// Handle error and add to DLQ\nconst inputData = $('Normalize Input').first().json;\n\nreturn [{\n  json: {\n    resource_type: 'text',\n    payload: {\n      source: inputData.source,\n      source_identifier: inputData.source_identifier,\n      subject: inputData.subject,\n      content_preview: inputData.content?.substring(0, 500),\n      user_id: inputData.user_id,\n      error_stage: 'validation'\n    },\n    error_message: $('Validate & Store Text').first().json.errors?.join('; ') || 'Unknown validation error',\n    error_code: 'TEXT_VALIDATION_FAILED'\n  }\n}];"
-      },
-      "id": "prepare-dlq",
-      "name": "Prepare DLQ Entry",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [1570, 500]
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "={{ $env.SUPABASE_URL }}/rest/v1/dead_letter_queue",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            },
-            {
-              "name": "Prefer",
-              "value": "return=representation"
-            }
-          ]
-        },
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify($json) }}",
-        "options": {}
-      },
-      "id": "add-to-dlq",
-      "name": "Add to DLQ",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4,
-      "position": [1790, 500],
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "supabase-auth",
-          "name": "Supabase Service Role"
-        }
-      }
+      "typeVersion": 1.1,
+      "position": [2010, 200]
     },
     {
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ JSON.stringify({ success: false, error: 'Text processing failed', dlq_id: $json.id, message: $('Prepare DLQ Entry').item.json.error_message }) }}",
+        "responseBody": "={{ JSON.stringify({ success: false, error: $json.error || $json.errors || 'Validation failed' }) }}",
         "options": {
           "responseCode": 422
         }
@@ -276,8 +174,8 @@
       "id": "error-response",
       "name": "Error Response",
       "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1,
-      "position": [2010, 500]
+      "typeVersion": 1.1,
+      "position": [2010, 400]
     }
   ],
   "connections": {
@@ -292,18 +190,18 @@
         ]
       ]
     },
-    "Email Inbox Monitor": {
+    "Normalize Input": {
       "main": [
         [
           {
-            "node": "Normalize Input",
+            "node": "Prepare OpenAI Payload",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Normalize Input": {
+    "Prepare OpenAI Payload": {
       "main": [
         [
           {
@@ -329,6 +227,17 @@
       "main": [
         [
           {
+            "node": "Prepare Supabase Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Supabase Payload": {
+      "main": [
+        [
+          {
             "node": "Validate & Store Text",
             "type": "main",
             "index": 0
@@ -351,62 +260,11 @@
       "main": [
         [
           {
-            "node": "Is Urgent?",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Prepare DLQ Entry",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Is Urgent?": {
-      "main": [
-        [
-          {
-            "node": "Send Urgent Notification",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
             "node": "Success Response",
             "type": "main",
             "index": 0
           }
-        ]
-      ]
-    },
-    "Send Urgent Notification": {
-      "main": [
-        [
-          {
-            "node": "Success Response",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Prepare DLQ Entry": {
-      "main": [
-        [
-          {
-            "node": "Add to DLQ",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Add to DLQ": {
-      "main": [
+        ],
         [
           {
             "node": "Error Response",
@@ -420,21 +278,10 @@
   "settings": {
     "executionOrder": "v1",
     "saveManualExecutions": true,
-    "callerPolicy": "workflowsFromSameOwner",
-    "errorWorkflow": "error-notifications"
+    "callerPolicy": "workflowsFromSameOwner"
   },
   "staticData": null,
-  "tags": [
-    {
-      "name": "tax-processing"
-    },
-    {
-      "name": "text"
-    },
-    {
-      "name": "email"
-    }
-  ],
-  "triggerCount": 2,
+  "tags": [],
+  "triggerCount": 1,
   "pinData": {}
 }

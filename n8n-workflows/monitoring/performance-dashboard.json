@@ -15,72 +15,99 @@
       "id": "schedule",
       "name": "Every 15 Minutes",
       "type": "n8n-nodes-base.scheduleTrigger",
-      "typeVersion": 1,
+      "typeVersion": 1.2,
       "position": [250, 300]
     },
     {
       "parameters": {
         "method": "GET",
-        "url": "={{ $env.SUPABASE_URL }}/rest/v1/worker_metrics?recorded_at=gte.{{ $now.minus({ hours: 24 }).toISO() }}&order=recorded_at.desc",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
+        "url": "=https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/worker_metrics?recorded_at=gte.{{ $now.minus({ hours: 24 }).toISO() }}&order=recorded_at.desc",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxreWl4YWlwcGRtdGp5aXp0dXp3Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2OTcwMjY4OSwiZXhwIjoyMDg1Mjc4Njg5fQ.nD4GhFIFXs-1qvdc42vAO1uumgTfGgiABsB9OgrOJHo"
+            }
+          ]
+        },
         "options": {}
       },
       "id": "fetch-metrics",
       "name": "Fetch Worker Metrics",
       "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4,
+      "typeVersion": 4.2,
       "position": [470, 200],
       "credentials": {
         "httpHeaderAuth": {
-          "id": "supabase-auth",
-          "name": "Supabase Service Role"
+          "id": "supabase-credential",
+          "name": "Supabase Service Key"
         }
       }
     },
     {
       "parameters": {
         "method": "GET",
-        "url": "={{ $env.SUPABASE_URL }}/rest/v1/task_queue?select=status,workflow_name&created_at=gte.{{ $now.minus({ hours: 24 }).toISO() }}",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
+        "url": "=https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/task_queue?select=status,workflow_name&created_at=gte.{{ $now.minus({ hours: 24 }).toISO() }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxreWl4YWlwcGRtdGp5aXp0dXp3Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2OTcwMjY4OSwiZXhwIjoyMDg1Mjc4Njg5fQ.nD4GhFIFXs-1qvdc42vAO1uumgTfGgiABsB9OgrOJHo"
+            }
+          ]
+        },
         "options": {}
       },
       "id": "fetch-tasks",
       "name": "Fetch Task Stats",
       "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4,
+      "typeVersion": 4.2,
       "position": [470, 400],
       "credentials": {
         "httpHeaderAuth": {
-          "id": "supabase-auth",
-          "name": "Supabase Service Role"
+          "id": "supabase-credential",
+          "name": "Supabase Service Key"
         }
       }
     },
     {
       "parameters": {
         "method": "GET",
-        "url": "={{ $env.SUPABASE_URL }}/rest/v1/dead_letter_queue?select=status,resource_type,retry_count&created_at=gte.{{ $now.minus({ hours: 24 }).toISO() }}",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
+        "url": "=https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/dead_letter_queue?select=status,resource_type,retry_count&created_at=gte.{{ $now.minus({ hours: 24 }).toISO() }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxreWl4YWlwcGRtdGp5aXp0dXp3Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2OTcwMjY4OSwiZXhwIjoyMDg1Mjc4Njg5fQ.nD4GhFIFXs-1qvdc42vAO1uumgTfGgiABsB9OgrOJHo"
+            }
+          ]
+        },
         "options": {}
       },
       "id": "fetch-dlq",
       "name": "Fetch DLQ Stats",
       "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4,
+      "typeVersion": 4.2,
       "position": [470, 600],
       "credentials": {
         "httpHeaderAuth": {
-          "id": "supabase-auth",
-          "name": "Supabase Service Role"
+          "id": "supabase-credential",
+          "name": "Supabase Service Key"
         }
       }
     },
     {
       "parameters": {
-        "jsCode": "// Calculate comprehensive metrics\nconst metrics = $('Fetch Worker Metrics').item.json || [];\nconst tasks = $('Fetch Task Stats').item.json || [];\nconst dlq = $('Fetch DLQ Stats').item.json || [];\n\nconst metricsArray = Array.isArray(metrics) ? metrics : [];\nconst tasksArray = Array.isArray(tasks) ? tasks : [];\nconst dlqArray = Array.isArray(dlq) ? dlq : [];\n\n// Worker performance\nconst workerStats = {};\nfor (const m of metricsArray) {\n  if (!workerStats[m.worker_name]) {\n    workerStats[m.worker_name] = { executions: 0, total_duration: 0, successes: 0, failures: 0 };\n  }\n  workerStats[m.worker_name].executions++;\n  workerStats[m.worker_name].total_duration += m.value || 0;\n  if (m.tags?.status === 'completed') {\n    workerStats[m.worker_name].successes++;\n  } else {\n    workerStats[m.worker_name].failures++;\n  }\n}\n\n// Calculate averages\nfor (const worker in workerStats) {\n  const stats = workerStats[worker];\n  stats.avg_duration_ms = stats.executions > 0 ? Math.round(stats.total_duration / stats.executions) : 0;\n  stats.success_rate = stats.executions > 0 ? ((stats.successes / stats.executions) * 100).toFixed(1) : 0;\n}\n\n// Task queue stats\nconst taskStats = {\n  total: tasksArray.length,\n  pending: tasksArray.filter(t => t.status === 'pending').length,\n  processing: tasksArray.filter(t => t.status === 'processing').length,\n  completed: tasksArray.filter(t => t.status === 'completed').length,\n  failed: tasksArray.filter(t => t.status === 'failed').length\n};\ntaskStats.success_rate = taskStats.total > 0 ? \n  ((taskStats.completed / taskStats.total) * 100).toFixed(1) : 0;\n\n// DLQ stats\nconst dlqStats = {\n  total: dlqArray.length,\n  pending: dlqArray.filter(d => d.status === 'pending').length,\n  abandoned: dlqArray.filter(d => d.status === 'abandoned').length,\n  recovered: dlqArray.filter(d => d.status === 'completed').length,\n  avg_retries: dlqArray.length > 0 ? \n    (dlqArray.reduce((sum, d) => sum + (d.retry_count || 0), 0) / dlqArray.length).toFixed(1) : 0\n};\n\n// Check for anomalies\nconst anomalies = [];\nif (taskStats.pending > 50) {\n  anomalies.push({ type: 'high_queue', message: `High pending tasks: ${taskStats.pending}` });\n}\nif (parseFloat(taskStats.success_rate) < 90) {\n  anomalies.push({ type: 'low_success_rate', message: `Low task success rate: ${taskStats.success_rate}%` });\n}\nif (dlqStats.abandoned > 10) {\n  anomalies.push({ type: 'high_abandonment', message: `High DLQ abandonment: ${dlqStats.abandoned}` });\n}\nfor (const worker in workerStats) {\n  if (parseFloat(workerStats[worker].success_rate) < 80) {\n    anomalies.push({ type: 'worker_issues', message: `Worker ${worker} success rate: ${workerStats[worker].success_rate}%` });\n  }\n}\n\nreturn {\n  json: {\n    timestamp: new Date().toISOString(),\n    period: '24h',\n    worker_performance: workerStats,\n    task_queue: taskStats,\n    dead_letter_queue: dlqStats,\n    anomalies: anomalies,\n    health_status: anomalies.length === 0 ? 'healthy' : anomalies.length <= 2 ? 'degraded' : 'critical'\n  }\n};"
+        "jsCode": "// Calculate comprehensive metrics\nconst metrics = $('Fetch Worker Metrics').first().json || [];\nconst tasks = $('Fetch Task Stats').first().json || [];\nconst dlq = $('Fetch DLQ Stats').first().json || [];\n\nconst metricsArray = Array.isArray(metrics) ? metrics : [];\nconst tasksArray = Array.isArray(tasks) ? tasks : [];\nconst dlqArray = Array.isArray(dlq) ? dlq : [];\n\n// Worker performance\nconst workerStats = {};\nfor (const m of metricsArray) {\n  if (!workerStats[m.worker_name]) {\n    workerStats[m.worker_name] = { executions: 0, total_duration: 0, successes: 0, failures: 0 };\n  }\n  workerStats[m.worker_name].executions++;\n  workerStats[m.worker_name].total_duration += m.value || 0;\n  if (m.tags?.status === 'completed') {\n    workerStats[m.worker_name].successes++;\n  } else {\n    workerStats[m.worker_name].failures++;\n  }\n}\n\n// Calculate averages\nfor (const worker in workerStats) {\n  const stats = workerStats[worker];\n  stats.avg_duration_ms = stats.executions > 0 ? Math.round(stats.total_duration / stats.executions) : 0;\n  stats.success_rate = stats.executions > 0 ? ((stats.successes / stats.executions) * 100).toFixed(1) : 0;\n}\n\n// Task queue stats\nconst taskStats = {\n  total: tasksArray.length,\n  pending: tasksArray.filter(t => t.status === 'pending').length,\n  processing: tasksArray.filter(t => t.status === 'processing').length,\n  completed: tasksArray.filter(t => t.status === 'completed').length,\n  failed: tasksArray.filter(t => t.status === 'failed').length\n};\ntaskStats.success_rate = taskStats.total > 0 ? \n  ((taskStats.completed / taskStats.total) * 100).toFixed(1) : 0;\n\n// DLQ stats\nconst dlqStats = {\n  total: dlqArray.length,\n  pending: dlqArray.filter(d => d.status === 'pending').length,\n  abandoned: dlqArray.filter(d => d.status === 'abandoned').length,\n  recovered: dlqArray.filter(d => d.status === 'completed').length,\n  avg_retries: dlqArray.length > 0 ? \n    (dlqArray.reduce((sum, d) => sum + (d.retry_count || 0), 0) / dlqArray.length).toFixed(1) : 0\n};\n\n// Check for anomalies\nconst anomalies = [];\nif (taskStats.pending > 50) {\n  anomalies.push({ type: 'high_queue', message: `High pending tasks: ${taskStats.pending}` });\n}\nif (parseFloat(taskStats.success_rate) < 90 && taskStats.total > 0) {\n  anomalies.push({ type: 'low_success_rate', message: `Low task success rate: ${taskStats.success_rate}%` });\n}\nif (dlqStats.abandoned > 10) {\n  anomalies.push({ type: 'high_abandonment', message: `High DLQ abandonment: ${dlqStats.abandoned}` });\n}\nfor (const worker in workerStats) {\n  if (parseFloat(workerStats[worker].success_rate) < 80) {\n    anomalies.push({ type: 'worker_issues', message: `Worker ${worker} success rate: ${workerStats[worker].success_rate}%` });\n  }\n}\n\nreturn {\n  json: {\n    timestamp: new Date().toISOString(),\n    period: '24h',\n    worker_performance: workerStats,\n    task_queue: taskStats,\n    dead_letter_queue: dlqStats,\n    anomalies: anomalies,\n    health_status: anomalies.length === 0 ? 'healthy' : anomalies.length <= 2 ? 'degraded' : 'critical'\n  }\n};"
       },
       "id": "calculate-metrics",
       "name": "Calculate Metrics",
@@ -91,15 +118,23 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $env.SUPABASE_URL }}/rest/v1/worker_metrics",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
+        "url": "https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/worker_metrics",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
             {
               "name": "Content-Type",
               "value": "application/json"
+            },
+            {
+              "name": "apikey",
+              "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxreWl4YWlwcGRtdGp5aXp0dXp3Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2OTcwMjY4OSwiZXhwIjoyMDg1Mjc4Njg5fQ.nD4GhFIFXs-1qvdc42vAO1uumgTfGgiABsB9OgrOJHo"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
             }
           ]
         },
@@ -111,61 +146,81 @@
       "id": "store-snapshot",
       "name": "Store Dashboard Snapshot",
       "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4,
+      "typeVersion": 4.2,
       "position": [910, 400],
       "credentials": {
         "httpHeaderAuth": {
-          "id": "supabase-auth",
-          "name": "Supabase Service Role"
+          "id": "supabase-credential",
+          "name": "Supabase Service Key"
         }
       }
     },
     {
       "parameters": {
         "conditions": {
-          "string": [
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
             {
-              "value1": "={{ $('Calculate Metrics').item.json.health_status }}",
-              "value2": "critical"
+              "id": "condition-critical",
+              "leftValue": "={{ $('Calculate Metrics').first().json.health_status }}",
+              "rightValue": "critical",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
             }
-          ]
-        }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
       },
       "id": "check-critical",
       "name": "Is Critical?",
       "type": "n8n-nodes-base.if",
-      "typeVersion": 1,
+      "typeVersion": 2,
       "position": [1130, 400]
     },
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $env.SUPABASE_URL }}/rest/v1/error_notifications",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
+        "url": "https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/error_notifications",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
             {
               "name": "Content-Type",
               "value": "application/json"
+            },
+            {
+              "name": "apikey",
+              "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxreWl4YWlwcGRtdGp5aXp0dXp3Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2OTcwMjY4OSwiZXhwIjoyMDg1Mjc4Njg5fQ.nD4GhFIFXs-1qvdc42vAO1uumgTfGgiABsB9OgrOJHo"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
             }
           ]
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ resource_type: 'system', severity: 'CRITICAL', message: 'System health critical: ' + $('Calculate Metrics').item.json.anomalies.map(a => a.message).join('; '), details: $('Calculate Metrics').item.json, notification_channels: ['database', 'slack', 'email'] }) }}",
+        "jsonBody": "={{ JSON.stringify({ resource_type: 'workflow', severity: 'CRITICAL', message: 'System health critical: ' + $('Calculate Metrics').first().json.anomalies.map(a => a.message).join('; '), details: $('Calculate Metrics').first().json, notification_channels: ['database', 'email'] }) }}",
         "options": {}
       },
       "id": "alert-critical",
       "name": "Send Critical Alert",
       "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4,
+      "typeVersion": 4.2,
       "position": [1350, 300],
       "credentials": {
         "httpHeaderAuth": {
-          "id": "supabase-auth",
-          "name": "Supabase Service Role"
+          "id": "supabase-credential",
+          "name": "Supabase Service Key"
         }
       }
     },
@@ -280,11 +335,7 @@
     "callerPolicy": "workflowsFromSameOwner"
   },
   "staticData": null,
-  "tags": [
-    {
-      "name": "monitoring"
-    }
-  ],
+  "tags": [],
   "triggerCount": 1,
   "pinData": {}
 }

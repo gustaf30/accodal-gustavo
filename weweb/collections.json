@@ -1,0 +1,208 @@
+{
+  "collections": [
+    {
+      "name": "Current User",
+      "type": "supabase",
+      "config": {
+        "source": "auth.user()",
+        "realtime": false
+      },
+      "description": "Current authenticated user from Supabase Auth"
+    },
+    {
+      "name": "User Documents",
+      "type": "supabase",
+      "config": {
+        "table": "documents",
+        "select": "id, filename, type, status, ocr_confidence, extracted_data, storage_path, created_at, updated_at",
+        "filter": "user_id=eq.{{currentUser.id}}",
+        "order": "created_at.desc",
+        "limit": 50,
+        "realtime": true
+      },
+      "description": "Documents belonging to the current user with real-time updates"
+    },
+    {
+      "name": "Recent Documents",
+      "type": "supabase",
+      "config": {
+        "table": "documents",
+        "select": "id, filename, type, status, created_at",
+        "filter": "user_id=eq.{{currentUser.id}}",
+        "order": "created_at.desc",
+        "limit": 10,
+        "realtime": true
+      },
+      "description": "Last 10 documents for dashboard display"
+    },
+    {
+      "name": "Document Details",
+      "type": "supabase",
+      "config": {
+        "table": "documents",
+        "select": "*",
+        "filter": "id=eq.{{routeParams.id}}",
+        "single": true
+      },
+      "description": "Single document by ID from route parameter"
+    },
+    {
+      "name": "Audio Transcriptions",
+      "type": "supabase",
+      "config": {
+        "table": "audio_transcriptions",
+        "select": "id, filename, transcription, language, duration_seconds, speaker_count, status, created_at",
+        "filter": "user_id=eq.{{currentUser.id}}",
+        "order": "created_at.desc",
+        "limit": 50,
+        "realtime": true
+      },
+      "description": "Audio transcriptions for current user"
+    },
+    {
+      "name": "Text Extractions",
+      "type": "supabase",
+      "config": {
+        "table": "text_extractions",
+        "select": "id, source, subject, extracted_content, entities, sentiment, status, created_at",
+        "filter": "user_id=eq.{{currentUser.id}}",
+        "order": "created_at.desc",
+        "limit": 50,
+        "realtime": true
+      },
+      "description": "Text extractions for current user"
+    },
+    {
+      "name": "Processing Logs",
+      "type": "supabase",
+      "config": {
+        "table": "processing_logs",
+        "select": "id, resource_type, action, status, details, created_at",
+        "filter": "user_id=eq.{{currentUser.id}}",
+        "order": "created_at.desc",
+        "limit": 20
+      },
+      "description": "Recent processing activity logs"
+    },
+    {
+      "name": "Notifications",
+      "type": "supabase",
+      "config": {
+        "table": "error_notifications",
+        "select": "id, severity, message, details, notification_channels, sent_at, created_at",
+        "filter": "user_id=eq.{{currentUser.id}}",
+        "order": "created_at.desc",
+        "limit": 50,
+        "realtime": true
+      },
+      "description": "User notifications with real-time updates"
+    },
+    {
+      "name": "Unread Notifications Count",
+      "type": "supabase",
+      "config": {
+        "table": "error_notifications",
+        "select": "id",
+        "filter": "user_id=eq.{{currentUser.id}}&sent_at=is.null",
+        "count": "exact"
+      },
+      "description": "Count of unread notifications for badge"
+    },
+    {
+      "name": "Dashboard Stats",
+      "type": "rest",
+      "config": {
+        "url": "{{env.API_URL}}/api/v1/stats",
+        "method": "GET",
+        "headers": {
+          "Authorization": "Bearer {{currentUser.access_token}}"
+        },
+        "params": {
+          "user_id": "{{currentUser.id}}"
+        }
+      },
+      "description": "Aggregated statistics for dashboard"
+    },
+    {
+      "name": "Search Results",
+      "type": "rest",
+      "config": {
+        "url": "{{env.API_URL}}/api/v1/search",
+        "method": "POST",
+        "headers": {
+          "Content-Type": "application/json",
+          "Authorization": "Bearer {{currentUser.access_token}}"
+        },
+        "body": {
+          "query": "{{variables.searchQuery}}",
+          "user_id": "{{currentUser.id}}",
+          "document_type": "{{variables.documentType}}",
+          "threshold": 0.7,
+          "limit": 20
+        }
+      },
+      "description": "RAG search results - triggered on search action"
+    },
+    {
+      "name": "Similar Documents",
+      "type": "rest",
+      "config": {
+        "url": "{{env.API_URL}}/api/v1/documents/{{routeParams.id}}/similar",
+        "method": "GET",
+        "headers": {
+          "Authorization": "Bearer {{currentUser.access_token}}"
+        }
+      },
+      "description": "Similar documents for detail page"
+    },
+    {
+      "name": "Document Inconsistencies",
+      "type": "rest",
+      "config": {
+        "url": "{{env.API_URL}}/api/v1/documents/{{routeParams.id}}/inconsistencies",
+        "method": "GET",
+        "headers": {
+          "Authorization": "Bearer {{currentUser.access_token}}"
+        }
+      },
+      "description": "Data inconsistencies for detail page"
+    }
+  ],
+  "variables": [
+    {
+      "name": "searchQuery",
+      "type": "string",
+      "default": ""
+    },
+    {
+      "name": "documentType",
+      "type": "string",
+      "default": ""
+    },
+    {
+      "name": "uploadProgress",
+      "type": "number",
+      "default": 0
+    },
+    {
+      "name": "isUploading",
+      "type": "boolean",
+      "default": false
+    },
+    {
+      "name": "currentJobId",
+      "type": "string",
+      "default": null
+    },
+    {
+      "name": "showNotifications",
+      "type": "boolean",
+      "default": false
+    }
+  ],
+  "environment": {
+    "API_URL": "https://accodal-gustavo.vercel.app",
+    "SUPABASE_URL": "https://lkyixaippdmtjyiztuzw.supabase.co",
+    "SUPABASE_ANON_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxreWl4YWlwcGRtdGp5aXp0dXp3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njk3MDI2ODksImV4cCI6MjA4NTI3ODY4OX0.LHSVwZSvnKBKX0qdxJAULu7salECJvJxs5G5i-pzKCE"
+  }
+}

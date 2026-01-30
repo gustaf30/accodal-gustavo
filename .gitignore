@@ -54,3 +54,5 @@ temp/
 # *.png
 # *.pdf
 # *.mp3
+
+.vercel
