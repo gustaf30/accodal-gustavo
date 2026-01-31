@@ -133,11 +133,11 @@
           "conditions": [
             {
               "id": "condition-has-tasks",
-              "leftValue": "={{ Array.isArray($json) ? $json.length : 0 }}",
-              "rightValue": 0,
+              "leftValue": "={{ $json.id }}",
+              "rightValue": "",
               "operator": {
-                "type": "number",
-                "operation": "gt"
+                "type": "string",
+                "operation": "exists"
               }
             }
           ],
@@ -153,7 +153,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Process pending tasks\nconst items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const tasks = item.json;\n  const taskArray = Array.isArray(tasks) ? tasks : [tasks];\n  \n  for (const task of taskArray) {\n    if (task && task.id) {\n      results.push({\n        json: {\n          ...task,\n          claimed_at: new Date().toISOString(),\n          worker_id: 'orchestrator-' + Math.random().toString(36).substr(2, 9)\n        }\n      });\n    }\n  }\n}\n\nreturn results;"
+        "jsCode": "// Add worker metadata to task\nconst task = $json;\nreturn {\n  json: {\n    ...task,\n    claimed_at: new Date().toISOString(),\n    worker_id: 'orchestrator-' + Math.random().toString(36).substr(2, 9)\n  }\n};"
       },
       "id": "prepare-tasks",
       "name": "Prepare Tasks",
@@ -203,7 +203,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Route based on workflow name and mark as completed\nconst items = $input.all();\nconst prevItems = $('Prepare Tasks').all();\nconst results = [];\n\nfor (let i = 0; i < items.length; i++) {\n  const task = prevItems[i].json;\n  const startTime = new Date(task.claimed_at);\n  const endTime = new Date();\n  const durationMs = endTime - startTime;\n  \n  // For demo, mark as completed (actual worker would be called via sub-workflow)\n  results.push({\n    json: {\n      task_id: task.id,\n      status: 'completed',\n      completed_at: endTime.toISOString(),\n      duration_ms: durationMs,\n      workflow_name: task.workflow_name\n    }\n  });\n}\n\nreturn results;"
+        "jsCode": "// Get task from Prepare Tasks node\nconst task = $('Prepare Tasks').first().json;\nconst startTime = new Date(task.claimed_at);\nconst endTime = new Date();\nconst durationMs = endTime - startTime;\n\n// Mark as completed\nreturn {\n  json: {\n    task_id: task.id,\n    status: 'completed',\n    completed_at: endTime.toISOString(),\n    duration_ms: durationMs,\n    workflow_name: task.workflow_name\n  }\n};"
       },
       "id": "process-task",
       "name": "Process Task",

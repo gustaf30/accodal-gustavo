@@ -24,6 +24,13 @@ import {
   handleGetText,
   handleListText,
 } from '../controllers/documentController';
+import {
+  upload,
+  handleFileUpload,
+  handleMultipleFileUpload,
+  handleBase64Upload,
+  handleProcessFromUrl,
+} from '../controllers/uploadController';
 import { authMiddleware, optionalAuthMiddleware, apiKeyMiddleware } from '../middleware/auth';
 import { rateLimiter } from '../middleware/rateLimiter';
 
@@ -163,6 +170,44 @@ router.post(
 router.get(
   '/batch/jobs/:jobId',
   handleGetJobStatus
+);
+
+// ============================================
+// File Upload Routes
+// ============================================
+
+// Upload single file
+router.post(
+  '/upload',
+  rateLimiter({ limit: 20, windowMs: 60000 }),
+  optionalAuthMiddleware,
+  upload.single('file'),
+  handleFileUpload
+);
+
+// Upload multiple files
+router.post(
+  '/upload/multiple',
+  rateLimiter({ limit: 10, windowMs: 60000 }),
+  optionalAuthMiddleware,
+  upload.array('files', 10),
+  handleMultipleFileUpload
+);
+
+// Upload file via base64 (easier for WeWeb/frontend)
+router.post(
+  '/upload/base64',
+  rateLimiter({ limit: 20, windowMs: 60000 }),
+  optionalAuthMiddleware,
+  handleBase64Upload
+);
+
+// Process file from URL (file already in Supabase Storage)
+router.post(
+  '/process',
+  rateLimiter({ limit: 30, windowMs: 60000 }),
+  optionalAuthMiddleware,
+  handleProcessFromUrl
 );
 
 // ============================================
