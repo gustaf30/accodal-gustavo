@@ -17,7 +17,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Parse incoming data for quality validation\nconst items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const body = item.json.body || item.json;\n  \n  results.push({\n    json: {\n      resource_type: body.resource_type || 'document',\n      resource_id: body.resource_id || null,\n      data: body.data || {},\n      validation_rules: body.rules || ['syntax', 'semantic', 'completeness'],\n      user_id: body.user_id || null\n    }\n  });\n}\n\nreturn results;"
+        "jsCode": "// Parse incoming data for quality validation\nconst inputData = $input.first().json;\nconst body = inputData.body || inputData;\n\nconst taskData = {\n  task_id: body.task_id || `qc_${Date.now()}`,\n  resource_type: body.resource_type || 'document',\n  resource_id: body.resource_id || null,\n  data: body.data || {},\n  validation_rules: body.rules || ['syntax', 'semantic', 'completeness'],\n  user_id: body.user_id || null,\n  started_at: new Date().toISOString(),\n  worker_name: 'quality-control'\n};\n\nreturn { json: taskData };"
       },
       "id": "parse-input",
       "name": "Parse Input",
@@ -27,23 +27,131 @@
     },
     {
       "parameters": {
-        "jsCode": "// Syntax validation - check data format and completeness\nconst items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const data = item.json.data;\n  const resourceType = item.json.resource_type;\n  const errors = [];\n  const warnings = [];\n  \n  // Check required fields based on resource type\n  const requiredFields = {\n    document: ['filename', 'type', 'extracted_data'],\n    audio: ['filename', 'transcription'],\n    text: ['source', 'content']\n  };\n  \n  const required = requiredFields[resourceType] || [];\n  for (const field of required) {\n    if (!data[field]) {\n      errors.push(`Missing required field: ${field}`);\n    }\n  }\n  \n  // Validate data types\n  if (data.ocr_confidence !== undefined) {\n    if (typeof data.ocr_confidence !== 'number' || data.ocr_confidence < 0 || data.ocr_confidence > 1) {\n      errors.push('ocr_confidence must be a number between 0 and 1');\n    }\n  }\n  \n  // Check for empty extracted data\n  if (data.extracted_data && Object.keys(data.extracted_data).length === 0) {\n    warnings.push('extracted_data is empty');\n  }\n  \n  results.push({\n    json: {\n      ...item.json,\n      syntax_validation: {\n        passed: errors.length === 0,\n        errors,\n        warnings\n      }\n    }\n  });\n}\n\nreturn results;"
+        "method": "POST",
+        "url": "https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/rpc/check_rate_limit_sliding",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "multipleHttpHeadersAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ p_identifier: $json.user_id || 'anonymous', p_endpoint: 'quality-control', p_limit: 30, p_window_seconds: 60 }) }}",
+        "options": {}
+      },
+      "id": "check-rate-limit",
+      "name": "Check Rate Limit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [690, 300],
+      "credentials": {
+        "multipleHttpHeadersAuth": {
+          "id": "supabase-both-keys",
+          "name": "Supabase Both Keys"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "rate-limit-allowed",
+              "leftValue": "={{ $json.allowed !== false }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "rate-limit-check",
+      "name": "Rate Limit OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [910, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: 'Rate limit exceeded', task_id: $('Parse Input').first().json.task_id }) }}"
+      },
+      "id": "rate-limit-response",
+      "name": "Rate Limit Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1130, 450]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/worker_metrics",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "multipleHttpHeadersAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ worker_name: 'quality-control', metric_type: 'task_started', value: 1, tags: { task_id: $('Parse Input').first().json.task_id, resource_type: $('Parse Input').first().json.resource_type } }) }}",
+        "options": {}
+      },
+      "id": "log-start-metric",
+      "name": "Log Start Metric",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1130, 300],
+      "credentials": {
+        "multipleHttpHeadersAuth": {
+          "id": "supabase-both-keys",
+          "name": "Supabase Both Keys"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Syntax validation - check data format and completeness\nconst taskData = $('Parse Input').first().json;\nconst data = taskData.data;\nconst resourceType = taskData.resource_type;\nconst errors = [];\nconst warnings = [];\n\n// Check required fields based on resource type\nconst requiredFields = {\n  document: ['filename', 'type', 'extracted_data'],\n  audio: ['filename', 'transcription'],\n  text: ['source', 'content']\n};\n\nconst required = requiredFields[resourceType] || [];\nfor (const field of required) {\n  if (!data[field]) {\n    errors.push(`Missing required field: ${field}`);\n  }\n}\n\n// Validate data types\nif (data.ocr_confidence !== undefined) {\n  if (typeof data.ocr_confidence !== 'number' || data.ocr_confidence < 0 || data.ocr_confidence > 1) {\n    errors.push('ocr_confidence must be a number between 0 and 1');\n  }\n}\n\n// Check for empty extracted data\nif (data.extracted_data && Object.keys(data.extracted_data).length === 0) {\n  warnings.push('extracted_data is empty');\n}\n\nreturn {\n  json: {\n    ...taskData,\n    syntax_validation: {\n      passed: errors.length === 0,\n      errors,\n      warnings\n    }\n  }\n};"
       },
       "id": "syntax-check",
       "name": "Syntax Validation",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [690, 300]
+      "position": [1350, 300]
     },
     {
       "parameters": {
-        "jsCode": "// Prepare OpenAI payload for semantic validation\nconst items = $input.all();\nconst results = [];\n\nconst systemPrompt = `You are a data quality validator. Check if the extracted data makes semantic sense and follows business rules.\n\nValidate:\n1. Logical consistency (e.g., tax amounts shouldn't exceed wages)\n2. Date validity (dates should be reasonable)\n3. Amount formatting (should be valid numbers)\n4. Name/address plausibility\n\nRespond ONLY with valid JSON:\n{\n  \"passed\": true,\n  \"issues\": [],\n  \"confidence\": 0.95,\n  \"suggestions\": []\n}`;\n\nfor (const item of items) {\n  const data = item.json;\n  \n  results.push({\n    json: {\n      ...data,\n      openai_payload: {\n        model: 'gpt-4o-mini',\n        messages: [\n          { role: 'system', content: systemPrompt },\n          { role: 'user', content: `Validate this ${data.resource_type} data:\\n\\n${JSON.stringify(data.data)}` }\n        ],\n        max_tokens: 1024,\n        temperature: 0.1\n      }\n    }\n  });\n}\n\nreturn results;"
+        "jsCode": "// Prepare OpenAI payload for semantic validation\nconst data = $input.first().json;\n\nconst systemPrompt = `You are a data quality validator. Check if the extracted data makes semantic sense and follows business rules.\n\nValidate:\n1. Logical consistency (e.g., tax amounts shouldn't exceed wages)\n2. Date validity (dates should be reasonable)\n3. Amount formatting (should be valid numbers)\n4. Name/address plausibility\n\nRespond ONLY with valid JSON:\n{\n  \"passed\": true,\n  \"issues\": [],\n  \"confidence\": 0.95,\n  \"suggestions\": []\n}`;\n\nreturn {\n  json: {\n    ...data,\n    openai_payload: {\n      model: 'gpt-4o-mini',\n      messages: [\n        { role: 'system', content: systemPrompt },\n        { role: 'user', content: `Validate this ${data.resource_type} data:\\n\\n${JSON.stringify(data.data)}` }\n      ],\n      max_tokens: 1024,\n      temperature: 0.1\n    }\n  }\n};"
       },
       "id": "prepare-semantic-payload",
       "name": "Prepare Semantic Payload",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [910, 300]
+      "position": [1570, 300]
     },
     {
       "parameters": {
@@ -63,66 +171,71 @@
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify($json.openai_payload) }}",
-        "options": {}
+        "options": {
+          "timeout": 60000,
+          "retry": {
+            "enabled": true,
+            "maxRetries": 3,
+            "waitBetweenRetries": 1000,
+            "backoffFactor": 2
+          }
+        }
       },
       "id": "semantic-validation",
       "name": "Semantic Validation",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1130, 300],
+      "position": [1790, 300],
       "credentials": {
         "httpHeaderAuth": {
           "id": "openai-credential",
           "name": "OpenAI API Key"
         }
-      }
+      },
+      "onError": "continueErrorOutput"
     },
     {
       "parameters": {
-        "jsCode": "// Process semantic validation result\nconst items = $input.all();\nconst prevItems = $('Prepare Semantic Payload').all();\nconst results = [];\n\nfor (let i = 0; i < items.length; i++) {\n  const item = items[i];\n  const inputData = prevItems[i].json;\n  \n  let semanticResult;\n  try {\n    let text = item.json.choices?.[0]?.message?.content || '{}';\n    if (text.includes('```json')) {\n      text = text.replace(/```json\\n?/g, '').replace(/```\\n?/g, '');\n    } else if (text.includes('```')) {\n      text = text.replace(/```\\n?/g, '');\n    }\n    semanticResult = JSON.parse(text.trim());\n  } catch (e) {\n    semanticResult = { passed: false, issues: ['Failed to parse validation result'], confidence: 0 };\n  }\n  \n  results.push({\n    json: {\n      ...inputData,\n      semantic_validation: semanticResult\n    }\n  });\n}\n\nreturn results;"
+        "jsCode": "// Process semantic validation result\nconst inputData = $('Prepare Semantic Payload').first().json;\nconst aiResult = $input.first().json;\n\nlet semanticResult;\ntry {\n  let text = aiResult.choices?.[0]?.message?.content || '{}';\n  if (text.includes('```json')) {\n    text = text.replace(/```json\\n?/g, '').replace(/```\\n?/g, '');\n  } else if (text.includes('```')) {\n    text = text.replace(/```\\n?/g, '');\n  }\n  semanticResult = JSON.parse(text.trim());\n} catch (e) {\n  semanticResult = { passed: false, issues: ['Failed to parse validation result'], confidence: 0 };\n}\n\nreturn {\n  json: {\n    ...inputData,\n    semantic_validation: semanticResult\n  }\n};"
       },
       "id": "process-semantic",
       "name": "Process Semantic Result",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1350, 300]
+      "position": [2010, 200]
     },
     {
       "parameters": {
-        "jsCode": "// Calculate completeness score\nconst items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const data = item.json.data;\n  const resourceType = item.json.resource_type;\n  \n  const expectedFields = {\n    'W-2': ['employer_name', 'employer_ein', 'employee_name', 'wages', 'federal_tax_withheld', 'state', 'state_wages'],\n    '1099': ['payer_name', 'payer_tin', 'recipient_name', 'amount'],\n    'Invoice': ['vendor_name', 'invoice_number', 'invoice_date', 'total_amount', 'line_items'],\n    'audio': ['transcription', 'duration_seconds', 'language'],\n    'text': ['content', 'source', 'subject']\n  };\n  \n  const expected = expectedFields[data.type] || expectedFields[resourceType] || [];\n  let presentCount = 0;\n  const missingFields = [];\n  \n  const extractedData = data.extracted_data || data;\n  \n  for (const field of expected) {\n    if (extractedData[field] !== undefined && extractedData[field] !== null && extractedData[field] !== '') {\n      presentCount++;\n    } else {\n      missingFields.push(field);\n    }\n  }\n  \n  const completenessScore = expected.length > 0 ? presentCount / expected.length : 1;\n  \n  results.push({\n    json: {\n      ...item.json,\n      completeness_validation: {\n        passed: completenessScore >= 0.7,\n        score: completenessScore,\n        present_fields: presentCount,\n        total_expected: expected.length,\n        missing_fields: missingFields\n      }\n    }\n  });\n}\n\nreturn results;"
+        "jsCode": "// Calculate completeness score\nconst data = $input.first().json;\nconst resourceType = data.resource_type;\nconst inputData = data.data;\n\nconst expectedFields = {\n  'W-2': ['employer_name', 'employer_ein', 'employee_name', 'wages', 'federal_tax_withheld', 'state', 'state_wages'],\n  '1099': ['payer_name', 'payer_tin', 'recipient_name', 'amount'],\n  'Invoice': ['vendor_name', 'invoice_number', 'invoice_date', 'total_amount', 'line_items'],\n  'audio': ['transcription', 'duration_seconds', 'language'],\n  'text': ['content', 'source', 'subject']\n};\n\nconst expected = expectedFields[inputData.type] || expectedFields[resourceType] || [];\nlet presentCount = 0;\nconst missingFields = [];\n\nconst extractedData = inputData.extracted_data || inputData;\n\nfor (const field of expected) {\n  if (extractedData[field] !== undefined && extractedData[field] !== null && extractedData[field] !== '') {\n    presentCount++;\n  } else {\n    missingFields.push(field);\n  }\n}\n\nconst completenessScore = expected.length > 0 ? presentCount / expected.length : 1;\n\nreturn {\n  json: {\n    ...data,\n    completeness_validation: {\n      passed: completenessScore >= 0.7,\n      score: completenessScore,\n      present_fields: presentCount,\n      total_expected: expected.length,\n      missing_fields: missingFields\n    }\n  }\n};"
       },
       "id": "completeness-check",
       "name": "Completeness Check",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1570, 300]
+      "position": [2230, 200]
     },
     {
       "parameters": {
-        "jsCode": "// Aggregate all validation results\nconst items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const data = item.json;\n  \n  const syntaxPassed = data.syntax_validation?.passed ?? true;\n  const semanticPassed = data.semantic_validation?.passed ?? true;\n  const completenessPassed = data.completeness_validation?.passed ?? true;\n  \n  const overallPassed = syntaxPassed && semanticPassed && completenessPassed;\n  \n  const allErrors = [\n    ...(data.syntax_validation?.errors || []),\n    ...(data.semantic_validation?.issues || [])\n  ];\n  \n  const allWarnings = [\n    ...(data.syntax_validation?.warnings || []),\n    ...(data.completeness_validation?.missing_fields?.map(f => `Missing field: ${f}`) || [])\n  ];\n  \n  const qualityScore = (\n    (syntaxPassed ? 0.3 : 0) +\n    (semanticPassed ? 0.4 : 0) +\n    ((data.completeness_validation?.score || 0) * 0.3)\n  );\n  \n  results.push({\n    json: {\n      resource_type: data.resource_type,\n      resource_id: data.resource_id,\n      user_id: data.user_id,\n      quality_check: {\n        passed: overallPassed,\n        quality_score: qualityScore,\n        validations: {\n          syntax: data.syntax_validation,\n          semantic: data.semantic_validation,\n          completeness: data.completeness_validation\n        },\n        errors: allErrors,\n        warnings: allWarnings,\n        recommendation: qualityScore >= 0.8 ? 'approved' : qualityScore >= 0.5 ? 'review_required' : 'rejected'\n      }\n    }\n  });\n}\n\nreturn results;"
+        "jsCode": "// Aggregate all validation results\nconst data = $input.first().json;\n\nconst syntaxPassed = data.syntax_validation?.passed ?? true;\nconst semanticPassed = data.semantic_validation?.passed ?? true;\nconst completenessPassed = data.completeness_validation?.passed ?? true;\n\nconst overallPassed = syntaxPassed && semanticPassed && completenessPassed;\n\nconst allErrors = [\n  ...(data.syntax_validation?.errors || []),\n  ...(data.semantic_validation?.issues || [])\n];\n\nconst allWarnings = [\n  ...(data.syntax_validation?.warnings || []),\n  ...(data.completeness_validation?.missing_fields?.map(f => `Missing field: ${f}`) || [])\n];\n\nconst qualityScore = (\n  (syntaxPassed ? 0.3 : 0) +\n  (semanticPassed ? 0.4 : 0) +\n  ((data.completeness_validation?.score || 0) * 0.3)\n);\n\nconst endTime = new Date();\nconst startTime = new Date(data.started_at);\nconst durationMs = endTime - startTime;\n\nreturn {\n  json: {\n    task_id: data.task_id,\n    resource_type: data.resource_type,\n    resource_id: data.resource_id,\n    user_id: data.user_id,\n    quality_check: {\n      passed: overallPassed,\n      quality_score: qualityScore,\n      validations: {\n        syntax: data.syntax_validation,\n        semantic: data.semantic_validation,\n        completeness: data.completeness_validation\n      },\n      errors: allErrors,\n      warnings: allWarnings,\n      recommendation: qualityScore >= 0.8 ? 'approved' : qualityScore >= 0.5 ? 'review_required' : 'rejected'\n    },\n    duration_ms: durationMs,\n    completed_at: endTime.toISOString()\n  }\n};"
       },
       "id": "aggregate-results",
       "name": "Aggregate Results",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1790, 300]
+      "position": [2450, 200]
     },
     {
       "parameters": {
         "method": "POST",
         "url": "https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/processing_logs",
         "authentication": "predefinedCredentialType",
-        "nodeCredentialType": "httpHeaderAuth",
+        "nodeCredentialType": "multipleHttpHeadersAuth",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
             {
               "name": "Content-Type",
               "value": "application/json"
-            },
-            {
-              "name": "apikey",
-              "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxreWl4YWlwcGRtdGp5aXp0dXp3Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2OTcwMjY4OSwiZXhwIjoyMDg1Mjc4Njg5fQ.nD4GhFIFXs-1qvdc42vAO1uumgTfGgiABsB9OgrOJHo"
             },
             {
               "name": "Prefer",
@@ -139,24 +252,175 @@
       "name": "Log Quality Check",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [2010, 300],
+      "position": [2670, 200],
       "credentials": {
-        "httpHeaderAuth": {
-          "id": "supabase-credential",
-          "name": "Supabase Service Key"
+        "multipleHttpHeadersAuth": {
+          "id": "supabase-both-keys",
+          "name": "Supabase Both Keys"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/worker_metrics",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "multipleHttpHeadersAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ worker_name: 'quality-control', metric_type: 'task_completed', value: $('Aggregate Results').first().json.duration_ms, tags: { task_id: $('Aggregate Results').first().json.task_id, quality_score: $('Aggregate Results').first().json.quality_check.quality_score, recommendation: $('Aggregate Results').first().json.quality_check.recommendation } }) }}",
+        "options": {}
+      },
+      "id": "log-success-metric",
+      "name": "Log Success Metric",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2890, 200],
+      "credentials": {
+        "multipleHttpHeadersAuth": {
+          "id": "supabase-both-keys",
+          "name": "Supabase Both Keys"
         }
       }
     },
     {
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ JSON.stringify($('Aggregate Results').first().json) }}"
+        "responseBody": "={{ JSON.stringify({ success: true, ...$('Aggregate Results').first().json }) }}"
       },
       "id": "response",
-      "name": "Response",
+      "name": "Success Response",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [2230, 300]
+      "position": [3110, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Handle error\nlet taskData = {};\ntry {\n  taskData = $('Prepare Semantic Payload').first().json || {};\n} catch (e) {\n  try {\n    taskData = $('Parse Input').first().json || {};\n  } catch (e2) {\n    taskData = {};\n  }\n}\n\nconst errorData = $input.first().json;\nconst endTime = new Date();\nlet durationMs = 0;\n\nif (taskData.started_at) {\n  const startTime = new Date(taskData.started_at);\n  durationMs = endTime - startTime;\n}\n\nreturn {\n  json: {\n    success: false,\n    task_id: taskData.task_id || 'unknown',\n    resource_type: taskData.resource_type || 'unknown',\n    worker_name: 'quality-control',\n    status: 'failed',\n    error: errorData.error?.message || errorData.message || 'Quality check failed',\n    duration_ms: durationMs || 1,\n    completed_at: endTime.toISOString()\n  }\n};"
+      },
+      "id": "handle-error",
+      "name": "Handle Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2010, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/worker_metrics",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "multipleHttpHeadersAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ worker_name: 'quality-control', metric_type: 'task_failed', value: $json.duration_ms || 1, tags: { task_id: $json.task_id || 'unknown', error: $json.error || 'Unknown error' } }) }}",
+        "options": {}
+      },
+      "id": "log-error-metric",
+      "name": "Log Error Metric",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2230, 400],
+      "credentials": {
+        "multipleHttpHeadersAuth": {
+          "id": "supabase-both-keys",
+          "name": "Supabase Both Keys"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/dead_letter_queue",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "multipleHttpHeadersAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ (() => { const errData = $('Handle Error').first().json; return JSON.stringify({ resource_type: errData.resource_type || 'quality_check', resource_id: errData.task_id || 'unknown-' + Date.now(), task_type: 'quality_check', payload: { resource_type: errData.resource_type }, error_message: errData.error || 'Unknown error', error_code: 'QC_FAILED', status: 'pending' }); })() }}",
+        "options": {}
+      },
+      "id": "add-to-dlq",
+      "name": "Add to DLQ",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2450, 400],
+      "credentials": {
+        "multipleHttpHeadersAuth": {
+          "id": "supabase-both-keys",
+          "name": "Supabase Both Keys"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fromEmail": "gustavoferraz405@gmail.com",
+        "toEmail": "gustavoferraz405@gmail.com",
+        "subject": "=Quality Check Failed - {{ $('Handle Error').first().json.task_id || 'unknown' }}",
+        "emailType": "html",
+        "html": "=<h2>Quality Check Failed</h2><table style=\"border-collapse: collapse; width: 100%; max-width: 600px;\"><tr><td style=\"padding: 8px; border: 1px solid #ddd;\"><strong>Task ID</strong></td><td style=\"padding: 8px; border: 1px solid #ddd;\">{{ $('Handle Error').first().json.task_id || 'unknown' }}</td></tr><tr><td style=\"padding: 8px; border: 1px solid #ddd;\"><strong>Resource Type</strong></td><td style=\"padding: 8px; border: 1px solid #ddd;\">{{ $('Handle Error').first().json.resource_type || 'unknown' }}</td></tr><tr><td style=\"padding: 8px; border: 1px solid #ddd;\"><strong>Error</strong></td><td style=\"padding: 8px; border: 1px solid #ddd; color: red;\">{{ $('Handle Error').first().json.error || 'Unknown error' }}</td></tr><tr><td style=\"padding: 8px; border: 1px solid #ddd;\"><strong>Worker</strong></td><td style=\"padding: 8px; border: 1px solid #ddd;\">quality-control</td></tr><tr><td style=\"padding: 8px; border: 1px solid #ddd;\"><strong>Time</strong></td><td style=\"padding: 8px; border: 1px solid #ddd;\">{{ new Date().toISOString() }}</td></tr></table><p style=\"margin-top: 20px; color: #666;\">This task has been added to the Dead Letter Queue for retry.</p>",
+        "options": {}
+      },
+      "id": "send-alert",
+      "name": "Send Alert Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [2670, 400],
+      "credentials": {
+        "smtp": {
+          "id": "smtp-credential",
+          "name": "SMTP"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($('Handle Error').first().json) }}"
+      },
+      "id": "error-response",
+      "name": "Error Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [2890, 400]
     }
   ],
   "connections": {
@@ -172,6 +436,46 @@
       ]
     },
     "Parse Input": {
+      "main": [
+        [
+          {
+            "node": "Check Rate Limit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Rate Limit": {
+      "main": [
+        [
+          {
+            "node": "Rate Limit OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Rate Limit OK?": {
+      "main": [
+        [
+          {
+            "node": "Log Start Metric",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Rate Limit Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Start Metric": {
       "main": [
         [
           {
@@ -209,6 +513,13 @@
         [
           {
             "node": "Process Semantic Result",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Handle Error",
             "type": "main",
             "index": 0
           }
@@ -252,7 +563,62 @@
       "main": [
         [
           {
-            "node": "Response",
+            "node": "Log Success Metric",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Success Metric": {
+      "main": [
+        [
+          {
+            "node": "Success Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Handle Error": {
+      "main": [
+        [
+          {
+            "node": "Log Error Metric",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Error Metric": {
+      "main": [
+        [
+          {
+            "node": "Add to DLQ",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Add to DLQ": {
+      "main": [
+        [
+          {
+            "node": "Send Alert Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Alert Email": {
+      "main": [
+        [
+          {
+            "node": "Error Response",
             "type": "main",
             "index": 0
           }
@@ -266,7 +632,7 @@
     "callerPolicy": "workflowsFromSameOwner"
   },
   "staticData": null,
-  "tags": [],
+  "tags": ["quality", "validation"],
   "triggerCount": 1,
   "pinData": {}
 }

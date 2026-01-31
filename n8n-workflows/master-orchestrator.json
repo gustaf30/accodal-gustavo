@@ -17,7 +17,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Parse incoming request and create task\nconst items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const body = item.json.body || item.json;\n  \n  // Determine task type and priority\n  let taskType = body.task_type || 'document';\n  let priority = body.priority || 2;\n  \n  // Auto-prioritize based on criteria\n  if (body.urgent === true) {\n    priority = 1;\n  }\n  \n  // Map task type to worker workflow\n  const workerMapping = {\n    'document': 'document-worker',\n    'audio': 'audio-worker',\n    'text': 'text-worker',\n    'onboarding': 'onboarding-worker',\n    'communication': 'communication-worker'\n  };\n  \n  const workflowName = workerMapping[taskType] || 'document-worker';\n  \n  results.push({\n    json: {\n      workflow_name: workflowName,\n      task_type: taskType,\n      priority: priority,\n      payload: body.payload || body,\n      status: 'pending'\n    }\n  });\n}\n\nreturn results;"
+        "jsCode": "// Parse incoming request and create task\nconst items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const body = item.json.body || item.json;\n  \n  // Determine task type based on mime_type or explicit type\n  let taskType = body.task_type;\n  \n  if (!taskType && body.payload?.mime_type) {\n    const mimeType = body.payload.mime_type;\n    if (mimeType.startsWith('audio/')) {\n      taskType = 'audio';\n    } else if (mimeType.startsWith('text/') || mimeType === 'application/json') {\n      taskType = 'text';\n    } else {\n      taskType = 'document';\n    }\n  }\n  \n  taskType = taskType || 'document';\n  \n  // Auto-prioritize: P1 (urgent) to P4 (low)\n  let priority = body.priority || 2;\n  if (body.urgent === true) priority = 1;\n  \n  // Map task type to worker workflow name\n  const workerMapping = {\n    'document': 'Document Processing Worker',\n    'audio': 'Audio Processing Worker',\n    'text': 'Text Processing Worker',\n    'onboarding': 'Onboarding Worker',\n    'communication': 'Communication Worker'\n  };\n  \n  const workflowName = workerMapping[taskType] || 'Document Processing Worker';\n  \n  results.push({\n    json: {\n      workflow_name: workflowName,\n      task_type: taskType,\n      priority: priority,\n      payload: body.payload || body,\n      status: 'pending',\n      created_at: new Date().toISOString()\n    }\n  });\n}\n\nreturn results;"
       },
       "id": "create-task",
       "name": "Create Task",
@@ -29,8 +29,6 @@
       "parameters": {
         "method": "POST",
         "url": "https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/task_queue",
-        "authentication": "predefinedCredentialType",
-        "nodeCredentialType": "httpHeaderAuth",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -40,7 +38,11 @@
             },
             {
               "name": "apikey",
-              "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxreWl4YWlwcGRtdGp5aXp0dXp3Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2OTcwMjY4OSwiZXhwIjoyMDg1Mjc4Njg5fQ.nD4GhFIFXs-1qvdc42vAO1uumgTfGgiABsB9OgrOJHo"
+              "value": "={{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer {{$env.SUPABASE_SERVICE_ROLE_KEY}}"
             },
             {
               "name": "Prefer",
@@ -57,13 +59,7 @@
       "name": "Insert Task to Queue",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [690, 300],
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "supabase-credential",
-          "name": "Supabase Service Key"
-        }
-      }
+      "position": [690, 300]
     },
     {
       "parameters": {
@@ -91,20 +87,22 @@
       "name": "Poll Task Queue",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
-      "position": [250, 550]
+      "position": [250, 600]
     },
     {
       "parameters": {
         "method": "GET",
         "url": "https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/task_queue?status=eq.pending&order=priority.asc,created_at.asc&limit=10",
-        "authentication": "predefinedCredentialType",
-        "nodeCredentialType": "httpHeaderAuth",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
             {
               "name": "apikey",
-              "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxreWl4YWlwcGRtdGp5aXp0dXp3Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2OTcwMjY4OSwiZXhwIjoyMDg1Mjc4Njg5fQ.nD4GhFIFXs-1qvdc42vAO1uumgTfGgiABsB9OgrOJHo"
+              "value": "={{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer {{$env.SUPABASE_SERVICE_ROLE_KEY}}"
             }
           ]
         },
@@ -114,13 +112,7 @@
       "name": "Fetch Pending Tasks",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [470, 550],
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "supabase-credential",
-          "name": "Supabase Service Key"
-        }
-      }
+      "position": [470, 600]
     },
     {
       "parameters": {
@@ -149,24 +141,12 @@
       "name": "Has Pending Tasks",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [690, 550]
-    },
-    {
-      "parameters": {
-        "jsCode": "// Add worker metadata to task\nconst task = $json;\nreturn {\n  json: {\n    ...task,\n    claimed_at: new Date().toISOString(),\n    worker_id: 'orchestrator-' + Math.random().toString(36).substr(2, 9)\n  }\n};"
-      },
-      "id": "prepare-tasks",
-      "name": "Prepare Tasks",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [910, 450]
+      "position": [690, 600]
     },
     {
       "parameters": {
         "method": "PATCH",
         "url": "=https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/task_queue?id=eq.{{ $json.id }}",
-        "authentication": "predefinedCredentialType",
-        "nodeCredentialType": "httpHeaderAuth",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -176,47 +156,244 @@
             },
             {
               "name": "apikey",
-              "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxreWl4YWlwcGRtdGp5aXp0dXp3Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2OTcwMjY4OSwiZXhwIjoyMDg1Mjc4Njg5fQ.nD4GhFIFXs-1qvdc42vAO1uumgTfGgiABsB9OgrOJHo"
+              "value": "={{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer {{$env.SUPABASE_SERVICE_ROLE_KEY}}"
             },
             {
               "name": "Prefer",
-              "value": "return=minimal"
+              "value": "return=representation"
             }
           ]
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ status: 'processing', worker_id: $json.worker_id, started_at: $json.claimed_at }) }}",
+        "jsonBody": "={{ JSON.stringify({ status: 'processing', started_at: new Date().toISOString() }) }}",
         "options": {}
       },
       "id": "claim-task",
       "name": "Claim Task",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1130, 450],
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "supabase-credential",
-          "name": "Supabase Service Key"
-        }
-      }
+      "position": [910, 500]
     },
     {
       "parameters": {
-        "jsCode": "// Get task from Prepare Tasks node\nconst task = $('Prepare Tasks').first().json;\nconst startTime = new Date(task.claimed_at);\nconst endTime = new Date();\nconst durationMs = endTime - startTime;\n\n// Mark as completed\nreturn {\n  json: {\n    task_id: task.id,\n    status: 'completed',\n    completed_at: endTime.toISOString(),\n    duration_ms: durationMs,\n    workflow_name: task.workflow_name\n  }\n};"
+        "jsCode": "// Prepare task data for worker execution\nconst task = $input.first().json;\nconst taskData = Array.isArray(task) ? task[0] : task;\n\nreturn {\n  json: {\n    task_id: taskData.id,\n    task_type: taskData.task_type,\n    workflow_name: taskData.workflow_name,\n    payload: taskData.payload,\n    priority: taskData.priority\n  }\n};"
       },
-      "id": "process-task",
-      "name": "Process Task",
+      "id": "prepare-worker-data",
+      "name": "Prepare Worker Data",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1350, 450]
+      "position": [1130, 500]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "is-document",
+              "leftValue": "={{ $json.task_type }}",
+              "rightValue": "document",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "route-document",
+      "name": "Is Document?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1350, 400]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "is-audio",
+              "leftValue": "={{ $json.task_type }}",
+              "rightValue": "audio",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "route-audio",
+      "name": "Is Audio?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1570, 550]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Document Processing Worker"
+        },
+        "options": {}
+      },
+      "id": "execute-document-worker",
+      "name": "Execute Document Worker",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [1570, 300]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Audio Processing Worker"
+        },
+        "options": {}
+      },
+      "id": "execute-audio-worker",
+      "name": "Execute Audio Worker",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [1790, 450]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Text Processing Worker"
+        },
+        "options": {}
+      },
+      "id": "execute-text-worker",
+      "name": "Execute Text Worker",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [2230, 850]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "is-communication",
+              "leftValue": "={{ $json.task_type }}",
+              "rightValue": "communication",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "route-communication",
+      "name": "Is Communication?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [2010, 750]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Communication Worker"
+        },
+        "options": {}
+      },
+      "id": "execute-communication-worker",
+      "name": "Execute Communication Worker",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [2230, 650]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "is-onboarding",
+              "leftValue": "={{ $json.task_type }}",
+              "rightValue": "onboarding",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "route-onboarding",
+      "name": "Is Onboarding?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1790, 650]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Onboarding Worker"
+        },
+        "options": {}
+      },
+      "id": "execute-onboarding-worker",
+      "name": "Execute Onboarding Worker",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [2010, 550]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Collect worker result and prepare status update\nconst workerResult = $input.first().json;\nconst taskData = $('Prepare Worker Data').first().json;\n\nconst success = workerResult.success !== false;\nconst status = success ? 'completed' : 'failed';\n\nreturn {\n  json: {\n    task_id: taskData.task_id,\n    status: status,\n    result: workerResult,\n    completed_at: new Date().toISOString()\n  }\n};"
+      },
+      "id": "collect-result",
+      "name": "Collect Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2010, 500]
     },
     {
       "parameters": {
         "method": "PATCH",
         "url": "=https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/task_queue?id=eq.{{ $json.task_id }}",
-        "authentication": "predefinedCredentialType",
-        "nodeCredentialType": "httpHeaderAuth",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -226,7 +403,11 @@
             },
             {
               "name": "apikey",
-              "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxreWl4YWlwcGRtdGp5aXp0dXp3Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2OTcwMjY4OSwiZXhwIjoyMDg1Mjc4Njg5fQ.nD4GhFIFXs-1qvdc42vAO1uumgTfGgiABsB9OgrOJHo"
+              "value": "={{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer {{$env.SUPABASE_SERVICE_ROLE_KEY}}"
             },
             {
               "name": "Prefer",
@@ -236,20 +417,14 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ status: $json.status, completed_at: $json.completed_at }) }}",
+        "jsonBody": "={{ JSON.stringify({ status: $json.status, completed_at: $json.completed_at, result: $json.result }) }}",
         "options": {}
       },
       "id": "update-status",
       "name": "Update Task Status",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1570, 450],
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "supabase-credential",
-          "name": "Supabase Service Key"
-        }
-      }
+      "position": [2230, 500]
     },
     {
       "parameters": {},
@@ -257,7 +432,43 @@
       "name": "No Tasks",
       "type": "n8n-nodes-base.noOp",
       "typeVersion": 1,
-      "position": [910, 650]
+      "position": [910, 700]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/worker_metrics",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "apikey",
+              "value": "={{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer {{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ worker_name: 'orchestrator', metric_type: 'task_' + $json.status, value: 1, tags: { task_id: $json.task_id } }) }}",
+        "options": {}
+      },
+      "id": "log-metric",
+      "name": "Log Completion Metric",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2450, 500]
     }
   ],
   "connections": {
@@ -320,7 +531,7 @@
       "main": [
         [
           {
-            "node": "Prepare Tasks",
+            "node": "Claim Task",
             "type": "main",
             "index": 0
           }
@@ -334,33 +545,171 @@
         ]
       ]
     },
-    "Prepare Tasks": {
-      "main": [
-        [
-          {
-            "node": "Claim Task",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "Claim Task": {
       "main": [
         [
           {
-            "node": "Process Task",
+            "node": "Prepare Worker Data",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Process Task": {
+    "Prepare Worker Data": {
+      "main": [
+        [
+          {
+            "node": "Is Document?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Document?": {
+      "main": [
+        [
+          {
+            "node": "Execute Document Worker",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Is Audio?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Audio?": {
+      "main": [
+        [
+          {
+            "node": "Execute Audio Worker",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Is Onboarding?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Onboarding?": {
+      "main": [
+        [
+          {
+            "node": "Execute Onboarding Worker",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Is Communication?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Communication?": {
+      "main": [
+        [
+          {
+            "node": "Execute Communication Worker",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Execute Text Worker",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Communication Worker": {
+      "main": [
+        [
+          {
+            "node": "Collect Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Onboarding Worker": {
+      "main": [
+        [
+          {
+            "node": "Collect Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Document Worker": {
+      "main": [
+        [
+          {
+            "node": "Collect Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Audio Worker": {
+      "main": [
+        [
+          {
+            "node": "Collect Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Text Worker": {
+      "main": [
+        [
+          {
+            "node": "Collect Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Collect Result": {
       "main": [
         [
           {
             "node": "Update Task Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Task Status": {
+      "main": [
+        [
+          {
+            "node": "Log Completion Metric",
             "type": "main",
             "index": 0
           }
@@ -374,7 +723,7 @@
     "callerPolicy": "workflowsFromSameOwner"
   },
   "staticData": null,
-  "tags": [],
+  "tags": ["orchestrator"],
   "triggerCount": 2,
   "pinData": {}
 }

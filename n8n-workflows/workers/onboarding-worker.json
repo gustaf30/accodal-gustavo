@@ -2,38 +2,139 @@
   "name": "Onboarding Worker",
   "nodes": [
     {
-      "parameters": {
-        "httpMethod": "POST",
-        "path": "onboarding",
-        "responseMode": "responseNode",
-        "options": {}
-      },
-      "id": "webhook-trigger",
-      "name": "Webhook Trigger",
-      "type": "n8n-nodes-base.webhook",
-      "typeVersion": 2,
-      "position": [250, 300],
-      "webhookId": "onboarding-worker"
+      "parameters": {},
+      "id": "start",
+      "name": "Start",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [250, 300]
     },
     {
       "parameters": {
-        "jsCode": "// Parse incoming onboarding request\nconst items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const body = item.json.body || item.json;\n  const payload = body.payload || body;\n  \n  results.push({\n    json: {\n      client_name: payload.client_name || payload.name || 'Unknown',\n      client_email: payload.email || payload.client_email,\n      client_type: payload.client_type || 'individual',\n      industry: payload.industry || null,\n      business_info: payload.business_info || {},\n      documents: payload.documents || [],\n      user_id: payload.user_id || null,\n      task_id: body.task_id || null\n    }\n  });\n}\n\nreturn results;"
+        "jsCode": "// Parse incoming onboarding request from orchestrator\nconst inputData = $input.first().json;\n\nconst taskData = {\n  task_id: inputData.task_id || inputData.id,\n  client_name: inputData.payload?.client_name || inputData.payload?.name || 'Unknown',\n  client_email: inputData.payload?.email || inputData.payload?.client_email,\n  client_type: inputData.payload?.client_type || 'individual',\n  industry: inputData.payload?.industry || null,\n  business_info: inputData.payload?.business_info || {},\n  annual_revenue: inputData.payload?.annual_revenue || null,\n  employee_count: inputData.payload?.employee_count || null,\n  documents: inputData.payload?.documents || [],\n  user_id: inputData.payload?.user_id || inputData.user_id,\n  priority: inputData.priority || 2,\n  started_at: new Date().toISOString(),\n  worker_name: 'onboarding-worker'\n};\n\nif (!taskData.client_name || taskData.client_name === 'Unknown') {\n  throw new Error('Client name is required for onboarding');\n}\n\nreturn { json: taskData };"
       },
       "id": "parse-task",
-      "name": "Parse Task",
+      "name": "Parse Task Data",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [470, 300]
     },
     {
       "parameters": {
-        "jsCode": "// Prepare OpenAI payload for client profile analysis\nconst items = $input.all();\nconst results = [];\n\nconst systemPrompt = `You are an onboarding specialist for a tax preparation service. Analyze the client profile and validate the information provided.\n\nRespond ONLY with valid JSON:\n{\n  \"profile_complete\": true,\n  \"missing_info\": [],\n  \"validation_results\": {\n    \"name_valid\": true,\n    \"email_valid\": true,\n    \"industry_recognized\": true,\n    \"client_type_valid\": true\n  },\n  \"suggested_documents\": [\"W-2\", \"1099-MISC\"],\n  \"risk_flags\": [],\n  \"onboarding_checklist\": [\n    {\"item\": \"Verify identity\", \"status\": \"pending\"},\n    {\"item\": \"Collect tax documents\", \"status\": \"pending\"}\n  ],\n  \"recommendations\": []\n}`;\n\nfor (const item of items) {\n  const data = item.json;\n  \n  const userMessage = `Analyze this client profile for onboarding:\n\nClient Name: ${data.client_name}\nEmail: ${data.client_email || 'Not provided'}\nClient Type: ${data.client_type}\nIndustry: ${data.industry || 'Not specified'}\nBusiness Info: ${JSON.stringify(data.business_info)}\nDocuments Provided: ${data.documents.length} document(s)`;\n  \n  results.push({\n    json: {\n      ...data,\n      openai_payload: {\n        model: 'gpt-4o-mini',\n        messages: [\n          { role: 'system', content: systemPrompt },\n          { role: 'user', content: userMessage }\n        ],\n        max_tokens: 2048,\n        temperature: 0.2\n      }\n    }\n  });\n}\n\nreturn results;"
+        "method": "POST",
+        "url": "https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/rpc/check_rate_limit_sliding",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "multipleHttpHeadersAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ p_identifier: $json.user_id || 'anonymous', p_endpoint: 'onboarding-worker', p_limit: 20, p_window_seconds: 60 }) }}",
+        "options": {}
+      },
+      "id": "check-rate-limit",
+      "name": "Check Rate Limit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [690, 300],
+      "credentials": {
+        "multipleHttpHeadersAuth": {
+          "id": "supabase-both-keys",
+          "name": "Supabase Both Keys"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "rate-limit-allowed",
+              "leftValue": "={{ $json.allowed !== false }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "rate-limit-check",
+      "name": "Rate Limit OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [910, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Rate limit exceeded\nconst taskData = $('Parse Task Data').first().json;\n\nreturn {\n  json: {\n    success: false,\n    task_id: taskData.task_id,\n    client_name: taskData.client_name,\n    worker_name: 'onboarding-worker',\n    status: 'rate_limited',\n    error: 'Rate limit exceeded for onboarding-worker',\n    completed_at: new Date().toISOString()\n  }\n};"
+      },
+      "id": "rate-limit-exceeded",
+      "name": "Rate Limit Exceeded",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1130, 450]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/worker_metrics",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "multipleHttpHeadersAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ worker_name: 'onboarding-worker', metric_type: 'task_started', value: 1, tags: { task_id: $('Parse Task Data').first().json.task_id, client_type: $('Parse Task Data').first().json.client_type } }) }}",
+        "options": {}
+      },
+      "id": "log-start-metric",
+      "name": "Log Start Metric",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1130, 300],
+      "credentials": {
+        "multipleHttpHeadersAuth": {
+          "id": "supabase-both-keys",
+          "name": "Supabase Both Keys"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare OpenAI payload for client profile analysis\nconst taskData = $('Parse Task Data').first().json;\n\nconst systemPrompt = `You are an onboarding specialist for a tax preparation service. Analyze the client profile and recommend service packages.\n\nService Packages:\n- BASIC ($199/year): Individual tax filing, standard deductions\n- STANDARD ($499/year): Itemized deductions, investment income\n- PREMIUM ($999/year): Self-employment, rental income, complex investments\n- BUSINESS_STARTER ($1,499/year): Small business, Schedule C\n- BUSINESS_GROWTH ($2,999/year): Multiple entities, employees, payroll\n- ENTERPRISE ($5,999+/year): Complex corporate structure, international\n\nRespond ONLY with valid JSON:\n{\n  \"profile_complete\": true,\n  \"missing_info\": [],\n  \"validation_results\": {\n    \"name_valid\": true,\n    \"email_valid\": true,\n    \"client_type_valid\": true\n  },\n  \"recommended_package\": \"PACKAGE_NAME\",\n  \"package_justification\": \"Why this package fits\",\n  \"complexity_score\": 1-10,\n  \"risk_level\": \"low|medium|high\",\n  \"suggested_documents\": [\"W-2\", \"1099-MISC\"],\n  \"risk_flags\": [],\n  \"onboarding_checklist\": [\n    {\"item\": \"Verify identity\", \"status\": \"pending\"},\n    {\"item\": \"Collect tax documents\", \"status\": \"pending\"}\n  ],\n  \"estimated_tax_savings\": \"$X,XXX\",\n  \"confidence\": 0.95\n}`;\n\nconst userMessage = `Analyze this client profile for onboarding and recommend a service package:\n\nClient Name: ${taskData.client_name}\nEmail: ${taskData.client_email || 'Not provided'}\nClient Type: ${taskData.client_type}\nIndustry: ${taskData.industry || 'Not specified'}\nAnnual Revenue: ${taskData.annual_revenue ? '$' + taskData.annual_revenue : 'Not specified'}\nEmployee Count: ${taskData.employee_count || 'Not specified'}\nBusiness Info: ${JSON.stringify(taskData.business_info)}\nDocuments Provided: ${taskData.documents.length} document(s)`;\n\nreturn {\n  json: {\n    ...taskData,\n    openai_payload: {\n      model: 'gpt-4o-mini',\n      messages: [\n        { role: 'system', content: systemPrompt },\n        { role: 'user', content: userMessage }\n      ],\n      max_tokens: 2048,\n      temperature: 0.2\n    }\n  }\n};"
       },
       "id": "prepare-openai-payload",
       "name": "Prepare OpenAI Payload",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [690, 300]
+      "position": [1350, 300]
     },
     {
       "parameters": {
@@ -53,46 +154,51 @@
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify($json.openai_payload) }}",
-        "options": {}
+        "options": {
+          "timeout": 60000,
+          "retry": {
+            "enabled": true,
+            "maxRetries": 3,
+            "waitBetweenRetries": 1000,
+            "backoffFactor": 2
+          }
+        }
       },
       "id": "analyze-profile",
       "name": "Analyze Client Profile",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [910, 300],
+      "position": [1570, 300],
       "credentials": {
         "httpHeaderAuth": {
           "id": "openai-credential",
           "name": "OpenAI API Key"
         }
-      }
+      },
+      "onError": "continueErrorOutput"
     },
     {
       "parameters": {
-        "jsCode": "// Process OpenAI analysis response\nconst items = $input.all();\nconst prevItems = $('Prepare OpenAI Payload').all();\nconst results = [];\n\nfor (let i = 0; i < items.length; i++) {\n  const item = items[i];\n  const inputData = prevItems[i].json;\n  \n  let analysis;\n  try {\n    let text = item.json.choices?.[0]?.message?.content || '{}';\n    if (text.includes('```json')) {\n      text = text.replace(/```json\\n?/g, '').replace(/```\\n?/g, '');\n    } else if (text.includes('```')) {\n      text = text.replace(/```\\n?/g, '');\n    }\n    analysis = JSON.parse(text.trim());\n  } catch (e) {\n    analysis = { \n      profile_complete: false, \n      parse_error: e.message,\n      missing_info: ['Unable to analyze profile'],\n      validation_results: {},\n      suggested_documents: ['W-2', '1099'],\n      onboarding_checklist: []\n    };\n  }\n  \n  results.push({\n    json: {\n      client_name: inputData.client_name,\n      client_email: inputData.client_email,\n      client_type: inputData.client_type,\n      user_id: inputData.user_id,\n      task_id: inputData.task_id,\n      analysis: analysis,\n      onboarding_status: analysis.profile_complete ? 'ready' : 'incomplete'\n    }\n  });\n}\n\nreturn results;"
+        "jsCode": "// Process OpenAI analysis response\nconst taskData = $('Prepare OpenAI Payload').first().json;\nconst aiResult = $input.first().json;\n\nlet analysis;\ntry {\n  let text = aiResult.choices?.[0]?.message?.content || '{}';\n  if (text.includes('```json')) {\n    text = text.replace(/```json\\n?/g, '').replace(/```\\n?/g, '');\n  } else if (text.includes('```')) {\n    text = text.replace(/```\\n?/g, '');\n  }\n  analysis = JSON.parse(text.trim());\n} catch (e) {\n  analysis = {\n    profile_complete: false,\n    parse_error: e.message,\n    missing_info: ['Unable to analyze profile'],\n    validation_results: {},\n    recommended_package: 'BASIC',\n    complexity_score: 5,\n    risk_level: 'medium',\n    suggested_documents: ['W-2', '1099'],\n    onboarding_checklist: [],\n    confidence: 0.5\n  };\n}\n\nconst status = analysis.profile_complete ? 'completed' : 'needs_review';\n\nreturn {\n  json: {\n    task_id: taskData.task_id,\n    user_id: taskData.user_id,\n    client_name: taskData.client_name,\n    client_email: taskData.client_email,\n    client_type: taskData.client_type,\n    analysis: analysis,\n    recommended_package: analysis.recommended_package,\n    complexity_score: analysis.complexity_score,\n    risk_level: analysis.risk_level,\n    onboarding_status: status,\n    started_at: taskData.started_at,\n    processed_at: new Date().toISOString()\n  }\n};"
       },
       "id": "process-analysis",
       "name": "Process Analysis",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1130, 300]
+      "position": [1790, 200]
     },
     {
       "parameters": {
         "method": "POST",
         "url": "https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/processing_logs",
         "authentication": "predefinedCredentialType",
-        "nodeCredentialType": "httpHeaderAuth",
+        "nodeCredentialType": "multipleHttpHeadersAuth",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
             {
               "name": "Content-Type",
               "value": "application/json"
-            },
-            {
-              "name": "apikey",
-              "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxreWl4YWlwcGRtdGp5aXp0dXp3Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2OTcwMjY4OSwiZXhwIjoyMDg1Mjc4Njg5fQ.nD4GhFIFXs-1qvdc42vAO1uumgTfGgiABsB9OgrOJHo"
             },
             {
               "name": "Prefer",
@@ -102,46 +208,290 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ resource_type: 'workflow', resource_id: $json.task_id || '00000000-0000-0000-0000-000000000000', user_id: $json.user_id, action: 'client_onboarding', status: $json.onboarding_status === 'ready' ? 'completed' : 'started', details: { client_name: $json.client_name, client_type: $json.client_type, analysis_summary: { profile_complete: $json.analysis.profile_complete, missing_info_count: ($json.analysis.missing_info || []).length } } }) }}",
+        "jsonBody": "={{ JSON.stringify({ resource_type: 'workflow', resource_id: $json.task_id || '00000000-0000-0000-0000-000000000000', user_id: $json.user_id, action: 'client_onboarding', status: $json.onboarding_status === 'completed' ? 'completed' : 'started', details: { client_name: $json.client_name, client_type: $json.client_type, recommended_package: $json.recommended_package, complexity_score: $json.complexity_score, risk_level: $json.risk_level } }) }}",
         "options": {}
       },
       "id": "log-onboarding",
       "name": "Log Onboarding",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1350, 300],
+      "position": [2010, 200],
       "credentials": {
-        "httpHeaderAuth": {
-          "id": "supabase-credential",
-          "name": "Supabase Service Key"
+        "multipleHttpHeadersAuth": {
+          "id": "supabase-both-keys",
+          "name": "Supabase Both Keys"
         }
       }
     },
     {
       "parameters": {
-        "respondWith": "json",
-        "responseBody": "={{ JSON.stringify({ success: true, task_id: $('Process Analysis').first().json.task_id, client_name: $('Process Analysis').first().json.client_name, onboarding_status: $('Process Analysis').first().json.onboarding_status, profile_complete: $('Process Analysis').first().json.analysis.profile_complete, missing_info: $('Process Analysis').first().json.analysis.missing_info || [], suggested_documents: $('Process Analysis').first().json.analysis.suggested_documents || [], checklist: $('Process Analysis').first().json.analysis.onboarding_checklist || [] }) }}"
+        "jsCode": "// Prepare success response\nconst taskData = $('Parse Task Data').first().json;\nconst processedData = $('Process Analysis').first().json;\n\nconst endTime = new Date();\nconst startTime = new Date(taskData.started_at);\nconst durationMs = endTime - startTime;\n\nreturn {\n  json: {\n    success: true,\n    task_id: taskData.task_id,\n    worker_name: 'onboarding-worker',\n    client_name: processedData.client_name,\n    recommended_package: processedData.recommended_package,\n    complexity_score: processedData.complexity_score,\n    risk_level: processedData.risk_level,\n    onboarding_status: processedData.onboarding_status,\n    duration_ms: durationMs,\n    completed_at: endTime.toISOString()\n  }\n};"
       },
-      "id": "success-response",
-      "name": "Success Response",
-      "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1.1,
-      "position": [1570, 300]
+      "id": "prepare-success",
+      "name": "Prepare Success Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2230, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/worker_metrics",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "multipleHttpHeadersAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ worker_name: 'onboarding-worker', metric_type: 'task_completed', value: $json.duration_ms, tags: { task_id: $json.task_id, recommended_package: $json.recommended_package, risk_level: $json.risk_level } }) }}",
+        "options": {}
+      },
+      "id": "log-success-metric",
+      "name": "Log Success Metric",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2450, 200],
+      "credentials": {
+        "multipleHttpHeadersAuth": {
+          "id": "supabase-both-keys",
+          "name": "Supabase Both Keys"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "has-email",
+              "leftValue": "={{ $('Process Analysis').first().json.client_email }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-has-email",
+      "name": "Has Client Email?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [2670, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare data for Communication Worker to send welcome email\nconst processedData = $('Process Analysis').first().json;\nconst successData = $('Prepare Success Response').first().json;\n\nreturn {\n  json: {\n    task_id: `welcome_${processedData.task_id}`,\n    communication_type: 'email',\n    template: 'onboarding_welcome',\n    recipient_email: processedData.client_email,\n    recipient_name: processedData.client_name,\n    subject: 'Welcome to Our Tax Service!',\n    context: {\n      client_name: processedData.client_name,\n      client_type: processedData.client_type,\n      recommended_package: processedData.recommended_package,\n      package_justification: processedData.analysis?.package_justification || 'Based on your profile',\n      complexity_score: processedData.complexity_score,\n      risk_level: processedData.risk_level,\n      suggested_documents: processedData.analysis?.suggested_documents || [],\n      onboarding_checklist: processedData.analysis?.onboarding_checklist || [],\n      estimated_tax_savings: processedData.analysis?.estimated_tax_savings || 'To be determined'\n    },\n    tone: 'warm',\n    priority: 'normal',\n    user_id: processedData.user_id,\n    source_worker: 'onboarding-worker'\n  }\n};"
+      },
+      "id": "prepare-welcome-data",
+      "name": "Prepare Welcome Email Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2890, 100]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Communication Worker"
+        },
+        "options": {}
+      },
+      "id": "send-welcome-email",
+      "name": "Send Welcome Email",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [3110, 100],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Final response - merge onboarding result with welcome email status\nconst successData = $('Prepare Success Response').first().json;\n\nlet welcomeEmailSent = false;\nlet welcomeEmailResult = null;\n\ntry {\n  welcomeEmailResult = $('Send Welcome Email').first().json;\n  welcomeEmailSent = welcomeEmailResult?.success === true;\n} catch (e) {\n  // No welcome email sent (no email address or error)\n  welcomeEmailSent = false;\n}\n\nreturn {\n  json: {\n    ...successData,\n    welcome_email_sent: welcomeEmailSent,\n    welcome_email_result: welcomeEmailResult\n  }\n};"
+      },
+      "id": "final-response",
+      "name": "Final Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3330, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Handle error\nlet taskData = {};\ntry {\n  taskData = $('Prepare OpenAI Payload').first().json || {};\n} catch (e) {\n  try {\n    taskData = $('Parse Task Data').first().json || {};\n  } catch (e2) {\n    taskData = {};\n  }\n}\n\nconst errorData = $input.first().json;\nconst endTime = new Date();\nlet durationMs = 0;\n\nif (taskData.started_at) {\n  const startTime = new Date(taskData.started_at);\n  durationMs = endTime - startTime;\n}\n\nreturn {\n  json: {\n    success: false,\n    task_id: taskData.task_id || 'unknown',\n    client_name: taskData.client_name || 'unknown',\n    worker_name: 'onboarding-worker',\n    status: 'failed',\n    error: errorData.error?.message || errorData.message || 'Onboarding analysis failed',\n    duration_ms: durationMs || 1,\n    completed_at: endTime.toISOString()\n  }\n};"
+      },
+      "id": "handle-error",
+      "name": "Handle Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1790, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/worker_metrics",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "multipleHttpHeadersAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ worker_name: 'onboarding-worker', metric_type: 'task_failed', value: $json.duration_ms || 1, tags: { task_id: $json.task_id || 'unknown', error: $json.error || 'Unknown error' } }) }}",
+        "options": {}
+      },
+      "id": "log-error-metric",
+      "name": "Log Error Metric",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2010, 400],
+      "credentials": {
+        "multipleHttpHeadersAuth": {
+          "id": "supabase-both-keys",
+          "name": "Supabase Both Keys"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/dead_letter_queue",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "multipleHttpHeadersAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ (() => { const errData = $('Handle Error').first().json; return JSON.stringify({ resource_type: 'document', resource_id: errData.task_id || 'unknown-' + Date.now(), task_type: 'onboarding', payload: { client_name: errData.client_name || 'unknown' }, error_message: errData.error || 'Unknown error', error_code: 'ONBOARDING_FAILED', status: 'pending' }); })() }}",
+        "options": {}
+      },
+      "id": "add-to-dlq",
+      "name": "Add to DLQ",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2230, 400],
+      "credentials": {
+        "multipleHttpHeadersAuth": {
+          "id": "supabase-both-keys",
+          "name": "Supabase Both Keys"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fromEmail": "gustavoferraz405@gmail.com",
+        "toEmail": "gustavoferraz405@gmail.com",
+        "subject": "🚨 Onboarding Failed - {{ $('Handle Error').first().json.task_id || 'unknown' }}",
+        "emailType": "html",
+        "html": "=<h2>🚨 Onboarding Processing Failed</h2><table style=\"border-collapse: collapse; width: 100%; max-width: 600px;\"><tr><td style=\"padding: 8px; border: 1px solid #ddd;\"><strong>Task ID</strong></td><td style=\"padding: 8px; border: 1px solid #ddd;\">{{ $('Handle Error').first().json.task_id || 'unknown' }}</td></tr><tr><td style=\"padding: 8px; border: 1px solid #ddd;\"><strong>Client</strong></td><td style=\"padding: 8px; border: 1px solid #ddd;\">{{ $('Handle Error').first().json.client_name || 'unknown' }}</td></tr><tr><td style=\"padding: 8px; border: 1px solid #ddd;\"><strong>Error</strong></td><td style=\"padding: 8px; border: 1px solid #ddd; color: red;\">{{ $('Handle Error').first().json.error || 'Unknown error' }}</td></tr><tr><td style=\"padding: 8px; border: 1px solid #ddd;\"><strong>Worker</strong></td><td style=\"padding: 8px; border: 1px solid #ddd;\">onboarding-worker</td></tr><tr><td style=\"padding: 8px; border: 1px solid #ddd;\"><strong>Time</strong></td><td style=\"padding: 8px; border: 1px solid #ddd;\">{{ new Date().toISOString() }}</td></tr></table><p style=\"margin-top: 20px; color: #666;\">This task has been added to the Dead Letter Queue for retry.</p>",
+        "options": {}
+      },
+      "id": "send-alert",
+      "name": "Send Alert Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [2450, 400],
+      "credentials": {
+        "smtp": {
+          "id": "smtp-credential",
+          "name": "SMTP"
+        }
+      },
+      "continueOnFail": true
     }
   ],
   "connections": {
-    "Webhook Trigger": {
+    "Start": {
       "main": [
         [
           {
-            "node": "Parse Task",
+            "node": "Parse Task Data",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Parse Task": {
+    "Parse Task Data": {
+      "main": [
+        [
+          {
+            "node": "Check Rate Limit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Rate Limit": {
+      "main": [
+        [
+          {
+            "node": "Rate Limit OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Rate Limit OK?": {
+      "main": [
+        [
+          {
+            "node": "Log Start Metric",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Rate Limit Exceeded",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Start Metric": {
       "main": [
         [
           {
@@ -171,6 +521,13 @@
             "type": "main",
             "index": 0
           }
+        ],
+        [
+          {
+            "node": "Handle Error",
+            "type": "main",
+            "index": 0
+          }
         ]
       ]
     },
@@ -189,7 +546,109 @@
       "main": [
         [
           {
-            "node": "Success Response",
+            "node": "Prepare Success Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Success Response": {
+      "main": [
+        [
+          {
+            "node": "Log Success Metric",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Success Metric": {
+      "main": [
+        [
+          {
+            "node": "Has Client Email?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Client Email?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Welcome Email Data",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Final Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Welcome Email Data": {
+      "main": [
+        [
+          {
+            "node": "Send Welcome Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Welcome Email": {
+      "main": [
+        [
+          {
+            "node": "Final Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Final Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Handle Error": {
+      "main": [
+        [
+          {
+            "node": "Log Error Metric",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Error Metric": {
+      "main": [
+        [
+          {
+            "node": "Add to DLQ",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Add to DLQ": {
+      "main": [
+        [
+          {
+            "node": "Send Alert Email",
             "type": "main",
             "index": 0
           }
@@ -203,7 +662,7 @@
     "callerPolicy": "workflowsFromSameOwner"
   },
   "staticData": null,
-  "tags": [],
-  "triggerCount": 1,
+  "tags": ["worker", "onboarding"],
+  "triggerCount": 0,
   "pinData": {}
 }

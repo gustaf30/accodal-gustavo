@@ -2,38 +2,139 @@
   "name": "Communication Worker",
   "nodes": [
     {
-      "parameters": {
-        "httpMethod": "POST",
-        "path": "communication",
-        "responseMode": "responseNode",
-        "options": {}
-      },
-      "id": "webhook-trigger",
-      "name": "Webhook Trigger",
-      "type": "n8n-nodes-base.webhook",
-      "typeVersion": 2,
-      "position": [250, 300],
-      "webhookId": "communication-worker"
+      "parameters": {},
+      "id": "start",
+      "name": "Start",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [250, 300]
     },
     {
       "parameters": {
-        "jsCode": "// Parse incoming communication request\nconst items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const body = item.json.body || item.json;\n  const payload = body.payload || body;\n  \n  results.push({\n    json: {\n      communication_type: payload.type || payload.communication_type || 'response',\n      recipient_email: payload.recipient_email || payload.to || payload.email,\n      recipient_name: payload.recipient_name || payload.name,\n      subject: payload.subject || 'Tax Document Update',\n      context: payload.context || {},\n      original_message: payload.original_message || payload.message || null,\n      tone: payload.tone || 'professional',\n      user_id: payload.user_id || null,\n      task_id: body.task_id || null\n    }\n  });\n}\n\nreturn results;"
+        "jsCode": "// Parse incoming communication request\nconst inputData = $input.first().json;\n\nconst taskData = {\n  task_id: inputData.task_id || inputData.id || `comm_${Date.now()}`,\n  communication_type: inputData.communication_type || inputData.payload?.communication_type || 'email',\n  template: inputData.template || inputData.payload?.template || 'general',\n  recipient_email: inputData.recipient_email || inputData.payload?.recipient_email || inputData.payload?.email,\n  recipient_name: inputData.recipient_name || inputData.payload?.recipient_name || inputData.payload?.client_name || 'Client',\n  recipient_phone: inputData.recipient_phone || inputData.payload?.recipient_phone || inputData.payload?.phone,\n  subject: inputData.subject || inputData.payload?.subject || 'Tax Service Update',\n  context: inputData.context || inputData.payload?.context || {},\n  original_message: inputData.original_message || inputData.payload?.original_message || null,\n  tone: inputData.tone || inputData.payload?.tone || 'professional',\n  priority: inputData.priority || inputData.payload?.priority || 'normal',\n  user_id: inputData.user_id || inputData.payload?.user_id,\n  source_worker: inputData.source_worker || 'direct',\n  started_at: new Date().toISOString(),\n  worker_name: 'communication-worker'\n};\n\nif (!taskData.recipient_email && taskData.communication_type === 'email') {\n  throw new Error('Recipient email is required for email communications');\n}\n\nreturn { json: taskData };"
       },
       "id": "parse-task",
-      "name": "Parse Task",
+      "name": "Parse Task Data",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [470, 300]
     },
     {
       "parameters": {
-        "jsCode": "// Prepare OpenAI payload for communication generation\nconst items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const data = item.json;\n  \n  const systemPrompt = `You are a professional communication assistant for a tax preparation service. Generate context-aware, helpful responses.\n\nTone: ${data.tone}\n\nRespond ONLY with valid JSON:\n{\n  \"subject\": \"Email subject line\",\n  \"greeting\": \"Dear [Name],\",\n  \"body\": \"Main message content...\",\n  \"closing\": \"Best regards,\",\n  \"action_items\": [\"List any action items for the recipient\"],\n  \"attachments_needed\": [],\n  \"follow_up_date\": null,\n  \"priority\": \"normal\"\n}`;\n  \n  let userMessage = `Generate a ${data.communication_type} for:\\n\\nRecipient: ${data.recipient_name || 'Client'}\\nSubject: ${data.subject}\\n\\nContext:\\n${JSON.stringify(data.context)}`;\n  \n  if (data.original_message) {\n    userMessage += `\\n\\nOriginal message to respond to:\\n${data.original_message}`;\n  }\n  \n  results.push({\n    json: {\n      ...data,\n      openai_payload: {\n        model: 'gpt-4o-mini',\n        messages: [\n          { role: 'system', content: systemPrompt },\n          { role: 'user', content: userMessage }\n        ],\n        max_tokens: 2048,\n        temperature: 0.7\n      }\n    }\n  });\n}\n\nreturn results;"
+        "method": "POST",
+        "url": "https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/rpc/check_rate_limit_sliding",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "multipleHttpHeadersAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ p_identifier: $json.user_id || 'anonymous', p_endpoint: 'communication-worker', p_limit: 30, p_window_seconds: 60 }) }}",
+        "options": {}
+      },
+      "id": "check-rate-limit",
+      "name": "Check Rate Limit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [690, 300],
+      "credentials": {
+        "multipleHttpHeadersAuth": {
+          "id": "supabase-both-keys",
+          "name": "Supabase Both Keys"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "rate-limit-allowed",
+              "leftValue": "={{ $json.allowed !== false }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "rate-limit-check",
+      "name": "Rate Limit OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [910, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Rate limit exceeded\nconst taskData = $('Parse Task Data').first().json;\n\nreturn {\n  json: {\n    success: false,\n    task_id: taskData.task_id,\n    recipient_email: taskData.recipient_email,\n    worker_name: 'communication-worker',\n    status: 'rate_limited',\n    error: 'Rate limit exceeded for communication-worker',\n    completed_at: new Date().toISOString()\n  }\n};"
+      },
+      "id": "rate-limit-exceeded",
+      "name": "Rate Limit Exceeded",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1130, 450]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/worker_metrics",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "multipleHttpHeadersAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ worker_name: 'communication-worker', metric_type: 'task_started', value: 1, tags: { task_id: $('Parse Task Data').first().json.task_id, communication_type: $('Parse Task Data').first().json.communication_type, template: $('Parse Task Data').first().json.template } }) }}",
+        "options": {}
+      },
+      "id": "log-start-metric",
+      "name": "Log Start Metric",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1130, 300],
+      "credentials": {
+        "multipleHttpHeadersAuth": {
+          "id": "supabase-both-keys",
+          "name": "Supabase Both Keys"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare OpenAI payload for communication generation\nconst taskData = $('Parse Task Data').first().json;\n\nconst templates = {\n  'onboarding_welcome': {\n    instruction: 'Generate a warm welcome email for a new client who just completed onboarding.',\n    include: ['recommended service package', 'next steps', 'contact information', 'expected timeline']\n  },\n  'document_received': {\n    instruction: 'Generate a confirmation email that their document has been received and is being processed.',\n    include: ['document type', 'processing time estimate', 'what to expect next']\n  },\n  'document_processed': {\n    instruction: 'Generate a notification email that document processing is complete.',\n    include: ['summary of findings', 'any action items', 'next steps']\n  },\n  'general': {\n    instruction: 'Generate a professional response based on the context provided.',\n    include: ['relevant information', 'clear next steps']\n  },\n  'reminder': {\n    instruction: 'Generate a friendly reminder email.',\n    include: ['what needs attention', 'deadline if applicable', 'how to complete']\n  },\n  'follow_up': {\n    instruction: 'Generate a follow-up email checking on status or requesting information.',\n    include: ['what was discussed', 'what is needed', 'timeline']\n  }\n};\n\nconst template = templates[taskData.template] || templates['general'];\n\nconst systemPrompt = `You are a professional communication assistant for a tax preparation service.\n\nTask: ${template.instruction}\nTone: ${taskData.tone}\nInclude: ${template.include.join(', ')}\n\nRespond ONLY with valid JSON:\n{\n  \"subject\": \"Email subject line (compelling but professional)\",\n  \"greeting\": \"Personalized greeting using recipient name\",\n  \"body\": \"Main message content with proper paragraphs\",\n  \"closing\": \"Professional closing\",\n  \"action_items\": [\"List any action items for the recipient\"],\n  \"urgency\": \"low|normal|high\",\n  \"follow_up_recommended\": true/false,\n  \"follow_up_days\": null or number\n}`;\n\nconst userMessage = `Generate communication for:\n\nRecipient: ${taskData.recipient_name}\nEmail: ${taskData.recipient_email}\nSubject Hint: ${taskData.subject}\nPriority: ${taskData.priority}\n\nContext:\n${JSON.stringify(taskData.context, null, 2)}\n\n${taskData.original_message ? 'Original message to respond to:\\n' + taskData.original_message : ''}`;\n\nreturn {\n  json: {\n    ...taskData,\n    openai_payload: {\n      model: 'gpt-4o-mini',\n      messages: [\n        { role: 'system', content: systemPrompt },\n        { role: 'user', content: userMessage }\n      ],\n      max_tokens: 2048,\n      temperature: 0.7\n    }\n  }\n};"
       },
       "id": "prepare-openai-payload",
       "name": "Prepare OpenAI Payload",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [690, 300]
+      "position": [1350, 300]
     },
     {
       "parameters": {
@@ -53,46 +154,122 @@
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify($json.openai_payload) }}",
-        "options": {}
+        "options": {
+          "timeout": 60000,
+          "retry": {
+            "enabled": true,
+            "maxRetries": 3,
+            "waitBetweenRetries": 1000,
+            "backoffFactor": 2
+          }
+        }
       },
-      "id": "generate-response",
-      "name": "Generate Response",
+      "id": "generate-content",
+      "name": "Generate Content",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [910, 300],
+      "position": [1570, 300],
       "credentials": {
         "httpHeaderAuth": {
           "id": "openai-credential",
           "name": "OpenAI API Key"
         }
-      }
+      },
+      "onError": "continueErrorOutput"
     },
     {
       "parameters": {
-        "jsCode": "// Process OpenAI response\nconst items = $input.all();\nconst prevItems = $('Prepare OpenAI Payload').all();\nconst results = [];\n\nfor (let i = 0; i < items.length; i++) {\n  const item = items[i];\n  const inputData = prevItems[i].json;\n  \n  let response;\n  try {\n    let text = item.json.choices?.[0]?.message?.content || '{}';\n    if (text.includes('```json')) {\n      text = text.replace(/```json\\n?/g, '').replace(/```\\n?/g, '');\n    } else if (text.includes('```')) {\n      text = text.replace(/```\\n?/g, '');\n    }\n    response = JSON.parse(text.trim());\n  } catch (e) {\n    response = { \n      subject: inputData.subject || 'Tax Document Update',\n      greeting: 'Dear Client,',\n      body: 'Thank you for your inquiry. We will get back to you shortly.',\n      closing: 'Best regards,',\n      action_items: [],\n      priority: 'normal',\n      parse_error: e.message \n    };\n  }\n  \n  // Compose full email\n  const fullEmail = `${response.greeting}\\n\\n${response.body}\\n\\n${response.closing}\\nTax Processing Team`;\n  \n  results.push({\n    json: {\n      recipient_email: inputData.recipient_email,\n      recipient_name: inputData.recipient_name,\n      subject: response.subject,\n      body: fullEmail,\n      body_parts: response,\n      user_id: inputData.user_id,\n      task_id: inputData.task_id,\n      action_items: response.action_items || [],\n      priority: response.priority || 'normal'\n    }\n  });\n}\n\nreturn results;"
+        "jsCode": "// Process OpenAI response and prepare email\nconst taskData = $('Prepare OpenAI Payload').first().json;\nconst aiResult = $input.first().json;\n\nlet content;\ntry {\n  let text = aiResult.choices?.[0]?.message?.content || '{}';\n  if (text.includes('```json')) {\n    text = text.replace(/```json\\n?/g, '').replace(/```\\n?/g, '');\n  } else if (text.includes('```')) {\n    text = text.replace(/```\\n?/g, '');\n  }\n  content = JSON.parse(text.trim());\n} catch (e) {\n  content = {\n    subject: taskData.subject || 'Tax Service Update',\n    greeting: `Dear ${taskData.recipient_name},`,\n    body: 'Thank you for contacting us. We will review your request and get back to you shortly.',\n    closing: 'Best regards,\\nTax Processing Team',\n    action_items: [],\n    urgency: 'normal',\n    follow_up_recommended: false,\n    parse_error: e.message\n  };\n}\n\n// Compose full email body\nconst fullBody = `${content.greeting}\\n\\n${content.body}\\n\\n${content.closing}`;\n\nreturn {\n  json: {\n    task_id: taskData.task_id,\n    communication_type: taskData.communication_type,\n    template: taskData.template,\n    recipient_email: taskData.recipient_email,\n    recipient_name: taskData.recipient_name,\n    recipient_phone: taskData.recipient_phone,\n    subject: content.subject,\n    body: fullBody,\n    body_parts: content,\n    action_items: content.action_items || [],\n    urgency: content.urgency || 'normal',\n    follow_up_recommended: content.follow_up_recommended,\n    follow_up_days: content.follow_up_days,\n    user_id: taskData.user_id,\n    source_worker: taskData.source_worker,\n    started_at: taskData.started_at\n  }\n};"
       },
-      "id": "process-response",
-      "name": "Process Response",
+      "id": "process-content",
+      "name": "Process Content",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1130, 300]
+      "position": [1790, 200]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "is-email",
+              "leftValue": "={{ $json.communication_type }}",
+              "rightValue": "email",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "route-communication",
+      "name": "Is Email?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [2010, 200]
+    },
+    {
+      "parameters": {
+        "fromEmail": "gustavoferraz405@gmail.com",
+        "toEmail": "={{ $json.recipient_email }}",
+        "subject": "={{ $json.subject }}",
+        "emailType": "html",
+        "html": "={{ $json.body.replace(/\\n/g, '<br>') }}",
+        "options": {}
+      },
+      "id": "send-email",
+      "name": "Send Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [2230, 100],
+      "credentials": {
+        "smtp": {
+          "id": "smtp-credential",
+          "name": "SMTP"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// SMS/Notification placeholder - log for now\nconst data = $input.first().json;\n\n// In production, integrate with Twilio, SendGrid, or push notification service\nconsole.log('SMS/Notification would be sent to:', data.recipient_phone);\n\nreturn {\n  json: {\n    ...data,\n    sms_status: 'logged',\n    notification_message: `SMS to ${data.recipient_phone}: ${data.body.substring(0, 160)}`\n  }\n};"
+      },
+      "id": "send-sms-notification",
+      "name": "Send SMS/Notification",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2230, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Merge results from email or SMS path\nlet data;\ntry {\n  data = $('Send Email').first().json;\n  data.delivery_method = 'email';\n  data.delivery_status = 'sent';\n} catch (e) {\n  try {\n    data = $('Send SMS/Notification').first().json;\n    data.delivery_method = 'sms';\n    data.delivery_status = data.sms_status || 'logged';\n  } catch (e2) {\n    data = $('Process Content').first().json;\n    data.delivery_method = 'unknown';\n    data.delivery_status = 'failed';\n  }\n}\n\nreturn { json: data };"
+      },
+      "id": "merge-results",
+      "name": "Merge Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2450, 200]
     },
     {
       "parameters": {
         "method": "POST",
         "url": "https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/processing_logs",
         "authentication": "predefinedCredentialType",
-        "nodeCredentialType": "httpHeaderAuth",
+        "nodeCredentialType": "multipleHttpHeadersAuth",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
             {
               "name": "Content-Type",
               "value": "application/json"
-            },
-            {
-              "name": "apikey",
-              "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxreWl4YWlwcGRtdGp5aXp0dXp3Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2OTcwMjY4OSwiZXhwIjoyMDg1Mjc4Njg5fQ.nD4GhFIFXs-1qvdc42vAO1uumgTfGgiABsB9OgrOJHo"
             },
             {
               "name": "Prefer",
@@ -102,46 +279,225 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ resource_type: 'workflow', resource_id: $json.task_id || '00000000-0000-0000-0000-000000000000', user_id: $json.user_id, action: 'communication_generated', status: 'completed', details: { recipient: $json.recipient_email, subject: $json.subject, priority: $json.priority, action_items_count: ($json.action_items || []).length } }) }}",
+        "jsonBody": "={{ JSON.stringify({ resource_type: 'workflow', resource_id: $json.task_id || '00000000-0000-0000-0000-000000000000', user_id: $json.user_id, action: 'communication_sent', status: 'completed', details: { recipient: $json.recipient_email, subject: $json.subject, delivery_method: $json.delivery_method, delivery_status: $json.delivery_status, template: $json.template, source_worker: $json.source_worker } }) }}",
         "options": {}
       },
       "id": "log-communication",
       "name": "Log Communication",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1350, 300],
+      "position": [2670, 200],
       "credentials": {
-        "httpHeaderAuth": {
-          "id": "supabase-credential",
-          "name": "Supabase Service Key"
+        "multipleHttpHeadersAuth": {
+          "id": "supabase-both-keys",
+          "name": "Supabase Both Keys"
         }
       }
     },
     {
       "parameters": {
-        "respondWith": "json",
-        "responseBody": "={{ JSON.stringify({ success: true, task_id: $('Process Response').first().json.task_id, recipient: $('Process Response').first().json.recipient_email, subject: $('Process Response').first().json.subject, body_preview: $('Process Response').first().json.body.substring(0, 200) + '...', action_items: $('Process Response').first().json.action_items, priority: $('Process Response').first().json.priority, full_response: $('Process Response').first().json.body }) }}"
+        "jsCode": "// Prepare success response\nconst data = $('Merge Results').first().json;\nconst taskData = $('Parse Task Data').first().json;\n\nconst endTime = new Date();\nconst startTime = new Date(taskData.started_at);\nconst durationMs = endTime - startTime;\n\nreturn {\n  json: {\n    success: true,\n    task_id: data.task_id,\n    worker_name: 'communication-worker',\n    communication_type: data.communication_type,\n    template: data.template,\n    recipient_email: data.recipient_email,\n    subject: data.subject,\n    delivery_method: data.delivery_method,\n    delivery_status: data.delivery_status,\n    action_items: data.action_items,\n    follow_up_recommended: data.follow_up_recommended,\n    follow_up_days: data.follow_up_days,\n    duration_ms: durationMs,\n    completed_at: endTime.toISOString()\n  }\n};"
       },
-      "id": "success-response",
-      "name": "Success Response",
-      "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1.1,
-      "position": [1570, 300]
+      "id": "prepare-success",
+      "name": "Prepare Success Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2890, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/worker_metrics",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "multipleHttpHeadersAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ worker_name: 'communication-worker', metric_type: 'task_completed', value: $json.duration_ms, tags: { task_id: $json.task_id, template: $json.template, delivery_method: $json.delivery_method } }) }}",
+        "options": {}
+      },
+      "id": "log-success-metric",
+      "name": "Log Success Metric",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [3110, 200],
+      "credentials": {
+        "multipleHttpHeadersAuth": {
+          "id": "supabase-both-keys",
+          "name": "Supabase Both Keys"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Handle error\nlet taskData = {};\ntry {\n  taskData = $('Prepare OpenAI Payload').first().json || {};\n} catch (e) {\n  try {\n    taskData = $('Parse Task Data').first().json || {};\n  } catch (e2) {\n    taskData = {};\n  }\n}\n\nconst errorData = $input.first().json;\nconst endTime = new Date();\nlet durationMs = 0;\n\nif (taskData.started_at) {\n  const startTime = new Date(taskData.started_at);\n  durationMs = endTime - startTime;\n}\n\nreturn {\n  json: {\n    success: false,\n    task_id: taskData.task_id || 'unknown',\n    recipient_email: taskData.recipient_email || 'unknown',\n    worker_name: 'communication-worker',\n    status: 'failed',\n    error: errorData.error?.message || errorData.message || 'Communication generation failed',\n    duration_ms: durationMs || 1,\n    completed_at: endTime.toISOString()\n  }\n};"
+      },
+      "id": "handle-error",
+      "name": "Handle Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1790, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/worker_metrics",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "multipleHttpHeadersAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ worker_name: 'communication-worker', metric_type: 'task_failed', value: $json.duration_ms || 1, tags: { task_id: $json.task_id || 'unknown', error: $json.error || 'Unknown error' } }) }}",
+        "options": {}
+      },
+      "id": "log-error-metric",
+      "name": "Log Error Metric",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2010, 400],
+      "credentials": {
+        "multipleHttpHeadersAuth": {
+          "id": "supabase-both-keys",
+          "name": "Supabase Both Keys"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/dead_letter_queue",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "multipleHttpHeadersAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ (() => { const errData = $('Handle Error').first().json; return JSON.stringify({ resource_type: 'communication', resource_id: errData.task_id || 'unknown-' + Date.now(), task_type: 'communication', payload: { recipient_email: errData.recipient_email || 'unknown' }, error_message: errData.error || 'Unknown error', error_code: 'COMMUNICATION_FAILED', status: 'pending' }); })() }}",
+        "options": {}
+      },
+      "id": "add-to-dlq",
+      "name": "Add to DLQ",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2230, 400],
+      "credentials": {
+        "multipleHttpHeadersAuth": {
+          "id": "supabase-both-keys",
+          "name": "Supabase Both Keys"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fromEmail": "gustavoferraz405@gmail.com",
+        "toEmail": "gustavoferraz405@gmail.com",
+        "subject": "=Communication Failed - {{ $('Handle Error').first().json.task_id || 'unknown' }}",
+        "emailType": "html",
+        "html": "=<h2>Communication Processing Failed</h2><table style=\"border-collapse: collapse; width: 100%; max-width: 600px;\"><tr><td style=\"padding: 8px; border: 1px solid #ddd;\"><strong>Task ID</strong></td><td style=\"padding: 8px; border: 1px solid #ddd;\">{{ $('Handle Error').first().json.task_id || 'unknown' }}</td></tr><tr><td style=\"padding: 8px; border: 1px solid #ddd;\"><strong>Recipient</strong></td><td style=\"padding: 8px; border: 1px solid #ddd;\">{{ $('Handle Error').first().json.recipient_email || 'unknown' }}</td></tr><tr><td style=\"padding: 8px; border: 1px solid #ddd;\"><strong>Error</strong></td><td style=\"padding: 8px; border: 1px solid #ddd; color: red;\">{{ $('Handle Error').first().json.error || 'Unknown error' }}</td></tr><tr><td style=\"padding: 8px; border: 1px solid #ddd;\"><strong>Worker</strong></td><td style=\"padding: 8px; border: 1px solid #ddd;\">communication-worker</td></tr><tr><td style=\"padding: 8px; border: 1px solid #ddd;\"><strong>Time</strong></td><td style=\"padding: 8px; border: 1px solid #ddd;\">{{ new Date().toISOString() }}</td></tr></table><p style=\"margin-top: 20px; color: #666;\">This task has been added to the Dead Letter Queue for retry.</p>",
+        "options": {}
+      },
+      "id": "send-alert",
+      "name": "Send Alert Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [2450, 400],
+      "credentials": {
+        "smtp": {
+          "id": "smtp-credential",
+          "name": "SMTP"
+        }
+      },
+      "continueOnFail": true
     }
   ],
   "connections": {
-    "Webhook Trigger": {
+    "Start": {
       "main": [
         [
           {
-            "node": "Parse Task",
+            "node": "Parse Task Data",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Parse Task": {
+    "Parse Task Data": {
+      "main": [
+        [
+          {
+            "node": "Check Rate Limit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Rate Limit": {
+      "main": [
+        [
+          {
+            "node": "Rate Limit OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Rate Limit OK?": {
+      "main": [
+        [
+          {
+            "node": "Log Start Metric",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Rate Limit Exceeded",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Start Metric": {
       "main": [
         [
           {
@@ -156,25 +512,90 @@
       "main": [
         [
           {
-            "node": "Generate Response",
+            "node": "Generate Content",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Generate Response": {
+    "Generate Content": {
       "main": [
         [
           {
-            "node": "Process Response",
+            "node": "Process Content",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Handle Error",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Process Response": {
+    "Process Content": {
+      "main": [
+        [
+          {
+            "node": "Is Email?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Email?": {
+      "main": [
+        [
+          {
+            "node": "Send Email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send SMS/Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Email": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Handle Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send SMS/Notification": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Results": {
       "main": [
         [
           {
@@ -189,7 +610,51 @@
       "main": [
         [
           {
-            "node": "Success Response",
+            "node": "Prepare Success Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Success Response": {
+      "main": [
+        [
+          {
+            "node": "Log Success Metric",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Handle Error": {
+      "main": [
+        [
+          {
+            "node": "Log Error Metric",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Error Metric": {
+      "main": [
+        [
+          {
+            "node": "Add to DLQ",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Add to DLQ": {
+      "main": [
+        [
+          {
+            "node": "Send Alert Email",
             "type": "main",
             "index": 0
           }
@@ -203,7 +668,7 @@
     "callerPolicy": "workflowsFromSameOwner"
   },
   "staticData": null,
-  "tags": [],
-  "triggerCount": 1,
+  "tags": ["worker", "communication"],
+  "triggerCount": 0,
   "pinData": {}
 }

@@ -1,0 +1,589 @@
+{
+  "name": "Audio Processing Worker",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "start",
+      "name": "Start",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract task data from parent workflow\nconst inputData = $input.first().json;\n\nconst taskData = {\n  task_id: inputData.task_id || inputData.id,\n  filename: inputData.payload?.filename || inputData.filename,\n  file_url: inputData.payload?.file_url || inputData.file_url,\n  mime_type: inputData.payload?.mime_type || inputData.mime_type || 'audio/mpeg',\n  user_id: inputData.payload?.user_id || inputData.user_id,\n  priority: inputData.priority || 2,\n  started_at: new Date().toISOString(),\n  worker_name: 'audio-worker'\n};\n\nif (!taskData.file_url) {\n  throw new Error('file_url is required for audio processing');\n}\n\nreturn { json: taskData };"
+      },
+      "id": "prepare-task",
+      "name": "Prepare Task Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [470, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/rpc/check_rate_limit_sliding",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "multipleHttpHeadersAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ p_identifier: $json.user_id || 'anonymous', p_endpoint: 'audio-worker', p_limit: 20, p_window_seconds: 60 }) }}",
+        "options": {}
+      },
+      "id": "check-rate-limit",
+      "name": "Check Rate Limit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [690, 300],
+      "credentials": {
+        "multipleHttpHeadersAuth": {
+          "id": "supabase-both-keys",
+          "name": "Supabase Both Keys"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "rate-limit-allowed",
+              "leftValue": "={{ $json.allowed !== false }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "rate-limit-check",
+      "name": "Rate Limit OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [910, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Rate limit exceeded - return error\nconst taskData = $('Prepare Task Data').first().json;\nconst rateLimitData = $('Check Rate Limit').first().json;\n\nreturn {\n  json: {\n    success: false,\n    task_id: taskData.task_id,\n    filename: taskData.filename,\n    worker_name: 'audio-worker',\n    status: 'rate_limited',\n    error: `Rate limit exceeded. Current: ${rateLimitData.current_count || 'unknown'}, Limit: 20/min. Retry after: ${rateLimitData.reset_at || 'unknown'}`,\n    retry_after: rateLimitData.reset_at,\n    completed_at: new Date().toISOString()\n  }\n};"
+      },
+      "id": "rate-limit-exceeded",
+      "name": "Rate Limit Exceeded",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1130, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/worker_metrics",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "multipleHttpHeadersAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ worker_name: 'audio-worker', metric_type: 'task_started', value: 1, tags: { task_id: $json.task_id, filename: $json.filename } }) }}",
+        "options": {}
+      },
+      "id": "log-start-metric",
+      "name": "Log Start Metric",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [690, 300],
+      "credentials": {
+        "multipleHttpHeadersAuth": {
+          "id": "supabase-both-keys",
+          "name": "Supabase Both Keys"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "={{ $('Prepare Task Data').first().json.file_url }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "multipleHttpHeadersAuth",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          },
+          "retry": {
+            "enabled": true,
+            "maxRetries": 3,
+            "waitBetweenRetries": 1000,
+            "backoffFactor": 2
+          }
+        }
+      },
+      "id": "download-audio",
+      "name": "Download Audio File",
+      "credentials": {
+        "multipleHttpHeadersAuth": {
+          "id": "supabase-both-keys",
+          "name": "Supabase Both Keys"
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [910, 300],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/audio/transcriptions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": []
+        },
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "model",
+              "value": "whisper-1"
+            },
+            {
+              "name": "response_format",
+              "value": "verbose_json"
+            },
+            {
+              "name": "language",
+              "value": "en"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "file",
+              "inputDataFieldName": "data"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 300000,
+          "retry": {
+            "enabled": true,
+            "maxRetries": 3,
+            "waitBetweenRetries": 1000,
+            "backoffFactor": 2
+          }
+        }
+      },
+      "id": "whisper-transcribe",
+      "name": "Whisper Transcription",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1130, 300],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "openai-credential",
+          "name": "OpenAI API Key"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Process transcription result, extract entities, and mask sensitive data\nconst taskData = $('Prepare Task Data').first().json;\nconst transcriptionResult = $input.first().json;\n\n// Function to mask SSN (XXX-XX-1234)\nfunction maskSSN(text) {\n  return text.replace(/\\b(\\d{3})[-\\s]?(\\d{2})[-\\s]?(\\d{4})\\b/g, 'XXX-XX-$3');\n}\n\n// Function to mask EIN/Tax ID\nfunction maskEIN(text) {\n  return text.replace(/\\b(\\d{2})[-]?(\\d{7})\\b/g, (match, p1, p2) => 'XX-XXX' + p2.slice(-4));\n}\n\nlet transcription = '';\nlet language = 'en';\nlet duration = 0;\nlet segments = [];\n\nif (transcriptionResult.text) {\n  transcription = transcriptionResult.text;\n  language = transcriptionResult.language || 'en';\n  duration = transcriptionResult.duration || 0;\n  segments = transcriptionResult.segments || [];\n}\n\n// Extract financial entities using regex patterns BEFORE masking\nconst entities = {\n  ssn: [],\n  tax_id: [],\n  amounts: [],\n  dates: [],\n  names: []\n};\n\n// SSN pattern: XXX-XX-XXXX (store masked versions)\nconst ssnMatches = transcription.match(/\\b\\d{3}[-\\s]?\\d{2}[-\\s]?\\d{4}\\b/g);\nif (ssnMatches) {\n  entities.ssn = ssnMatches.map(ssn => {\n    const digits = ssn.replace(/[^0-9]/g, '');\n    return 'XXX-XX-' + digits.slice(-4);\n  });\n}\n\n// Tax ID / EIN pattern: XX-XXXXXXX (store masked versions)\nconst einMatches = transcription.match(/\\b\\d{2}[-\\s]?\\d{7}\\b/g);\nif (einMatches) {\n  entities.tax_id = einMatches.map(ein => {\n    const digits = ein.replace(/[^0-9]/g, '');\n    return 'XX-XXX' + digits.slice(-4);\n  });\n}\n\n// Money amounts (these can remain unmasked)\nconst amountMatches = transcription.match(/\\$[\\d,]+\\.?\\d*/g);\nif (amountMatches) entities.amounts = amountMatches;\n\n// Dates\nconst dateMatches = transcription.match(/\\b\\d{1,2}[\\/\\-]\\d{1,2}[\\/\\-]\\d{2,4}\\b/g);\nif (dateMatches) entities.dates = dateMatches;\n\n// Mask the transcription text before storage\nlet maskedTranscription = maskSSN(transcription);\nmaskedTranscription = maskEIN(maskedTranscription);\n\nreturn {\n  json: {\n    task_id: taskData.task_id,\n    user_id: taskData.user_id,\n    filename: taskData.filename,\n    file_url: taskData.file_url,\n    transcription: maskedTranscription,\n    language: language,\n    duration_seconds: Math.round(duration),\n    segments_count: segments.length,\n    extracted_entities: entities,\n    confidence: transcriptionResult.confidence || 0.9,\n    status: 'completed',\n    data_masked: true,\n    processed_at: new Date().toISOString()\n  }\n};"
+      },
+      "id": "process-transcription",
+      "name": "Process Transcription",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1350, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/audio_transcriptions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "multipleHttpHeadersAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  user_id: $json.user_id || null,\n  filename: $json.filename,\n  file_url: $json.file_url,\n  duration_seconds: $json.duration_seconds,\n  transcription: $json.transcription,\n  extracted_entities: $json.extracted_entities,\n  confidence: $json.confidence,\n  language: $json.language,\n  status: $json.status,\n  processed_at: $json.processed_at\n}) }}",
+        "options": {}
+      },
+      "id": "store-transcription",
+      "name": "Store in Supabase",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1570, 200],
+      "credentials": {
+        "multipleHttpHeadersAuth": {
+          "id": "supabase-both-keys",
+          "name": "Supabase Both Keys"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare success response for parent workflow\nconst taskData = $('Prepare Task Data').first().json;\nconst processedData = $('Process Transcription').first().json;\nconst storedData = $input.first().json;\n\nconst endTime = new Date();\nconst startTime = new Date(taskData.started_at);\nconst durationMs = endTime - startTime;\n\nreturn {\n  json: {\n    success: true,\n    task_id: taskData.task_id,\n    record_id: Array.isArray(storedData) ? storedData[0]?.id : storedData.id,\n    worker_name: 'audio-worker',\n    status: 'completed',\n    duration_ms: durationMs,\n    transcription_length: processedData.transcription?.length || 0,\n    entities_found: Object.values(processedData.extracted_entities || {}).flat().length,\n    completed_at: endTime.toISOString()\n  }\n};"
+      },
+      "id": "prepare-success-response",
+      "name": "Prepare Success Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1790, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/worker_metrics",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "multipleHttpHeadersAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ worker_name: 'audio-worker', metric_type: 'task_completed', value: $json.duration_ms, tags: { task_id: $json.task_id, status: 'success', entities_found: $json.entities_found } }) }}",
+        "options": {}
+      },
+      "id": "log-success-metric",
+      "name": "Log Success Metric",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2010, 200],
+      "credentials": {
+        "multipleHttpHeadersAuth": {
+          "id": "supabase-both-keys",
+          "name": "Supabase Both Keys"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Handle transcription error\nlet taskData = {};\ntry {\n  taskData = $('Prepare Task Data').first().json || {};\n} catch (e) {\n  taskData = {};\n}\n\nconst errorData = $input.first().json;\nconst endTime = new Date();\nlet durationMs = 0;\n\nif (taskData.started_at) {\n  const startTime = new Date(taskData.started_at);\n  durationMs = endTime - startTime;\n}\n\nreturn {\n  json: {\n    success: false,\n    task_id: taskData.task_id || 'unknown',\n    filename: taskData.filename || 'unknown',\n    file_url: taskData.file_url || 'unknown',\n    worker_name: 'audio-worker',\n    status: 'failed',\n    error: errorData.error?.message || errorData.message || 'Transcription failed',\n    duration_ms: durationMs || 1,\n    completed_at: endTime.toISOString()\n  }\n};"
+      },
+      "id": "handle-error",
+      "name": "Handle Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1350, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/worker_metrics",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "multipleHttpHeadersAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ worker_name: 'audio-worker', metric_type: 'task_failed', value: $json.duration_ms || 1, tags: { task_id: $json.task_id || 'unknown', error: $json.error || 'Unknown error' } }) }}",
+        "options": {}
+      },
+      "id": "log-error-metric",
+      "name": "Log Error Metric",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1570, 400],
+      "credentials": {
+        "multipleHttpHeadersAuth": {
+          "id": "supabase-both-keys",
+          "name": "Supabase Both Keys"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/dead_letter_queue",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "multipleHttpHeadersAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ (() => { const errData = $('Handle Error').first().json; return JSON.stringify({ resource_type: 'audio', resource_id: errData.task_id || 'unknown-' + Date.now(), payload: { filename: errData.filename || 'unknown', file_url: errData.file_url || 'unknown' }, error_message: errData.error || 'Unknown error', error_code: 'TRANSCRIPTION_FAILED', status: 'pending' }); })() }}",
+        "options": {}
+      },
+      "id": "add-to-dlq",
+      "name": "Add to DLQ",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1790, 400],
+      "credentials": {
+        "multipleHttpHeadersAuth": {
+          "id": "supabase-both-keys",
+          "name": "Supabase Both Keys"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fromEmail": "gustavoferraz405@gmail.com",
+        "toEmail": "gustavoferraz405@gmail.com",
+        "subject": "🚨 Audio Processing Failed - {{ $('Handle Error').first().json.task_id || 'unknown' }}",
+        "emailType": "html",
+        "html": "=<h2>🚨 Audio Processing Failed</h2><table style=\"border-collapse: collapse; width: 100%; max-width: 600px;\"><tr><td style=\"padding: 8px; border: 1px solid #ddd;\"><strong>Task ID</strong></td><td style=\"padding: 8px; border: 1px solid #ddd;\">{{ $('Handle Error').first().json.task_id || 'unknown' }}</td></tr><tr><td style=\"padding: 8px; border: 1px solid #ddd;\"><strong>Filename</strong></td><td style=\"padding: 8px; border: 1px solid #ddd;\">{{ $('Handle Error').first().json.filename || 'unknown' }}</td></tr><tr><td style=\"padding: 8px; border: 1px solid #ddd;\"><strong>Error</strong></td><td style=\"padding: 8px; border: 1px solid #ddd; color: red;\">{{ $('Handle Error').first().json.error || 'Unknown error' }}</td></tr><tr><td style=\"padding: 8px; border: 1px solid #ddd;\"><strong>Worker</strong></td><td style=\"padding: 8px; border: 1px solid #ddd;\">audio-worker</td></tr><tr><td style=\"padding: 8px; border: 1px solid #ddd;\"><strong>Time</strong></td><td style=\"padding: 8px; border: 1px solid #ddd;\">{{ new Date().toISOString() }}</td></tr></table><p style=\"margin-top: 20px; color: #666;\">This task has been added to the Dead Letter Queue for retry.</p>",
+        "options": {}
+      },
+      "id": "send-alert",
+      "name": "Send Alert Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [2010, 400],
+      "credentials": {
+        "smtp": {
+          "id": "smtp-credential",
+          "name": "SMTP"
+        }
+      },
+      "continueOnFail": true
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Prepare Task Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Task Data": {
+      "main": [
+        [
+          {
+            "node": "Check Rate Limit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Rate Limit": {
+      "main": [
+        [
+          {
+            "node": "Rate Limit OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Rate Limit OK?": {
+      "main": [
+        [
+          {
+            "node": "Log Start Metric",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Rate Limit Exceeded",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Start Metric": {
+      "main": [
+        [
+          {
+            "node": "Download Audio File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Audio File": {
+      "main": [
+        [
+          {
+            "node": "Whisper Transcription",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Handle Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Whisper Transcription": {
+      "main": [
+        [
+          {
+            "node": "Process Transcription",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Handle Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Transcription": {
+      "main": [
+        [
+          {
+            "node": "Store in Supabase",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store in Supabase": {
+      "main": [
+        [
+          {
+            "node": "Prepare Success Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Success Response": {
+      "main": [
+        [
+          {
+            "node": "Log Success Metric",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Handle Error": {
+      "main": [
+        [
+          {
+            "node": "Log Error Metric",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Error Metric": {
+      "main": [
+        [
+          {
+            "node": "Add to DLQ",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Add to DLQ": {
+      "main": [
+        [
+          {
+            "node": "Send Alert Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "staticData": null,
+  "tags": ["worker", "audio"],
+  "triggerCount": 0,
+  "pinData": {}
+}

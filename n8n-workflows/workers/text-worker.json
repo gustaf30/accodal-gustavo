@@ -1,0 +1,524 @@
+{
+  "name": "Text Processing Worker",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "start",
+      "name": "Start",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract task data from parent workflow\nconst inputData = $input.first().json;\n\nconst taskData = {\n  task_id: inputData.task_id || inputData.id,\n  source: inputData.payload?.source || inputData.source || 'api',\n  source_identifier: inputData.payload?.source_identifier || inputData.source_identifier,\n  subject: inputData.payload?.subject || inputData.subject,\n  content: inputData.payload?.content || inputData.content,\n  user_id: inputData.payload?.user_id || inputData.user_id,\n  priority: inputData.priority || 2,\n  started_at: new Date().toISOString(),\n  worker_name: 'text-worker'\n};\n\nif (!taskData.content) {\n  throw new Error('Content is required for text processing');\n}\n\nreturn { json: taskData };"
+      },
+      "id": "prepare-task",
+      "name": "Prepare Task Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [470, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/rpc/check_rate_limit_sliding",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "multipleHttpHeadersAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ p_identifier: $json.user_id || 'anonymous', p_endpoint: 'text-worker', p_limit: 30, p_window_seconds: 60 }) }}",
+        "options": {}
+      },
+      "id": "check-rate-limit",
+      "name": "Check Rate Limit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [690, 300],
+      "credentials": {
+        "multipleHttpHeadersAuth": {
+          "id": "supabase-both-keys",
+          "name": "Supabase Both Keys"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "rate-limit-allowed",
+              "leftValue": "={{ $json.allowed !== false }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "rate-limit-check",
+      "name": "Rate Limit OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [910, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Rate limit exceeded - return error\nconst taskData = $('Prepare Task Data').first().json;\nconst rateLimitData = $('Check Rate Limit').first().json;\n\nreturn {\n  json: {\n    success: false,\n    task_id: taskData.task_id,\n    source: taskData.source,\n    worker_name: 'text-worker',\n    status: 'rate_limited',\n    error: `Rate limit exceeded. Current: ${rateLimitData.current_count || 'unknown'}, Limit: 30/min. Retry after: ${rateLimitData.reset_at || 'unknown'}`,\n    retry_after: rateLimitData.reset_at,\n    completed_at: new Date().toISOString()\n  }\n};"
+      },
+      "id": "rate-limit-exceeded",
+      "name": "Rate Limit Exceeded",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1130, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/worker_metrics",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "multipleHttpHeadersAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ worker_name: 'text-worker', metric_type: 'task_started', value: 1, tags: { task_id: $json.task_id, source: $json.source } }) }}",
+        "options": {}
+      },
+      "id": "log-start-metric",
+      "name": "Log Start Metric",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [690, 300],
+      "credentials": {
+        "multipleHttpHeadersAuth": {
+          "id": "supabase-both-keys",
+          "name": "Supabase Both Keys"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  model: 'gpt-4o-mini',\n  messages: [\n    {\n      role: 'system',\n      content: 'You are a tax document analysis expert. Extract all financial and tax-related information from the provided text. Respond ONLY with valid JSON in this format:\\n{\\n  \"extracted_data\": {\\n    \"document_type\": \"email|form|contract|other\",\\n    \"tax_related\": true/false,\\n    \"financial_entities\": {},\\n    \"key_dates\": [],\\n    \"amounts\": [],\\n    \"persons\": [],\\n    \"organizations\": []\\n  },\\n  \"entities\": {\\n    \"ssn\": [],\\n    \"tax_id\": [],\\n    \"account_numbers\": [],\\n    \"amounts\": [],\\n    \"dates\": []\\n  },\\n  \"sentiment\": \"positive|neutral|negative\",\\n  \"summary\": \"Brief summary of the content\",\\n  \"confidence\": 0.95\\n}'\n    },\n    {\n      role: 'user',\n      content: 'Analyze this text and extract all tax-related information:\\n\\n' + $('Prepare Task Data').first().json.content\n    }\n  ],\n  max_tokens: 2048,\n  temperature: 0.1\n}) }}",
+        "options": {
+          "timeout": 60000,
+          "retry": {
+            "enabled": true,
+            "maxRetries": 3,
+            "waitBetweenRetries": 1000,
+            "backoffFactor": 2
+          }
+        }
+      },
+      "id": "openai-extract",
+      "name": "OpenAI Text Extraction",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [910, 300],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "openai-credential",
+          "name": "OpenAI API Key"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Process OpenAI extraction result with data masking\nconst taskData = $('Prepare Task Data').first().json;\nconst aiResult = $input.first().json;\n\n// Data masking functions\nfunction maskSSN(text) {\n  return text.replace(/\\b(\\d{3})[-\\s]?(\\d{2})[-\\s]?(\\d{4})\\b/g, 'XXX-XX-$3');\n}\n\nfunction maskEIN(text) {\n  return text.replace(/\\b(\\d{2})[-]?(\\d{7})\\b/g, (match, p1, p2) => 'XX-XXX' + p2.slice(-4));\n}\n\nfunction maskSensitiveText(text) {\n  if (!text) return text;\n  let masked = maskSSN(text);\n  masked = maskEIN(masked);\n  return masked;\n}\n\nfunction maskSensitiveData(obj) {\n  if (!obj || typeof obj !== 'object') return obj;\n  \n  const sensitiveKeys = ['ssn', 'social_security', 'tax_id', 'ein', 'tin', 'itin', 'account_number'];\n  const result = Array.isArray(obj) ? [] : {};\n  \n  for (const [key, value] of Object.entries(obj)) {\n    const lowerKey = key.toLowerCase();\n    \n    if (sensitiveKeys.some(sk => lowerKey.includes(sk))) {\n      if (typeof value === 'string') {\n        const digits = value.replace(/[^0-9]/g, '');\n        result[key] = '***-**-' + digits.slice(-4);\n      } else if (Array.isArray(value)) {\n        result[key] = value.map(v => typeof v === 'string' ? '***-**-' + v.replace(/[^0-9]/g, '').slice(-4) : v);\n      } else {\n        result[key] = value;\n      }\n    } else if (typeof value === 'object' && value !== null) {\n      result[key] = maskSensitiveData(value);\n    } else if (typeof value === 'string') {\n      result[key] = maskSensitiveText(value);\n    } else {\n      result[key] = value;\n    }\n  }\n  \n  return result;\n}\n\nlet extractedData = {};\nlet entities = {};\nlet sentiment = 'neutral';\nlet summary = '';\nlet confidence = 0.5;\n\ntry {\n  let responseText = aiResult.choices?.[0]?.message?.content || '{}';\n  \n  // Clean JSON from markdown code blocks\n  if (responseText.includes('```json')) {\n    responseText = responseText.replace(/```json\\n?/g, '').replace(/```\\n?/g, '');\n  } else if (responseText.includes('```')) {\n    responseText = responseText.replace(/```\\n?/g, '');\n  }\n  \n  const parsed = JSON.parse(responseText.trim());\n  extractedData = parsed.extracted_data || {};\n  entities = parsed.entities || {};\n  sentiment = parsed.sentiment || 'neutral';\n  summary = parsed.summary || '';\n  confidence = parsed.confidence || 0.8;\n} catch (e) {\n  // Fallback: extract entities using regex\n  const content = taskData.content;\n  \n  // Extract then mask SSNs\n  const ssnMatches = content.match(/\\b\\d{3}[-\\s]?\\d{2}[-\\s]?\\d{4}\\b/g) || [];\n  const maskedSSNs = ssnMatches.map(ssn => {\n    const digits = ssn.replace(/[^0-9]/g, '');\n    return 'XXX-XX-' + digits.slice(-4);\n  });\n  \n  // Extract then mask Tax IDs\n  const einMatches = content.match(/\\b\\d{2}[-\\s]?\\d{7}\\b/g) || [];\n  const maskedEINs = einMatches.map(ein => {\n    const digits = ein.replace(/[^0-9]/g, '');\n    return 'XX-XXX' + digits.slice(-4);\n  });\n  \n  entities = {\n    ssn: maskedSSNs,\n    tax_id: maskedEINs,\n    amounts: (content.match(/\\$[\\d,]+\\.?\\d*/g) || []),\n    dates: (content.match(/\\b\\d{1,2}[\\/\\-]\\d{1,2}[\\/\\-]\\d{2,4}\\b/g) || [])\n  };\n  \n  extractedData = {\n    document_type: 'other',\n    tax_related: ssnMatches.length > 0 || einMatches.length > 0 || entities.amounts.length > 0,\n    parse_error: e.message\n  };\n  \n  confidence = 0.5;\n}\n\n// Apply masking to all data\nconst maskedExtractedData = maskSensitiveData(extractedData);\nconst maskedEntities = maskSensitiveData(entities);\nconst maskedContent = maskSensitiveText(taskData.content);\nconst maskedSummary = maskSensitiveText(summary);\n\nreturn {\n  json: {\n    task_id: taskData.task_id,\n    user_id: taskData.user_id,\n    source: taskData.source,\n    source_identifier: taskData.source_identifier,\n    subject: taskData.subject,\n    content: maskedContent,\n    extracted_data: maskedExtractedData,\n    entities: maskedEntities,\n    sentiment: sentiment,\n    summary: maskedSummary,\n    confidence: confidence,\n    data_masked: true,\n    status: confidence >= 0.7 ? 'completed' : 'needs_review',\n    processed_at: new Date().toISOString()\n  }\n};"
+      },
+      "id": "process-extraction",
+      "name": "Process Extraction",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1130, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/text_extractions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "multipleHttpHeadersAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  user_id: $json.user_id || null,\n  source: $json.source,\n  source_identifier: $json.source_identifier,\n  subject: $json.subject,\n  content: $json.content,\n  extracted_data: $json.extracted_data,\n  entities: $json.entities,\n  status: $json.status,\n  processed_at: $json.processed_at\n}) }}",
+        "options": {}
+      },
+      "id": "store-extraction",
+      "name": "Store in Supabase",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1350, 200],
+      "credentials": {
+        "multipleHttpHeadersAuth": {
+          "id": "supabase-both-keys",
+          "name": "Supabase Both Keys"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare success response for parent workflow\nconst taskData = $('Prepare Task Data').first().json;\nconst processedData = $('Process Extraction').first().json;\nconst storedData = $input.first().json;\n\nconst endTime = new Date();\nconst startTime = new Date(taskData.started_at);\nconst durationMs = endTime - startTime;\n\nconst entitiesCount = Object.values(processedData.entities || {}).flat().length;\n\nreturn {\n  json: {\n    success: true,\n    task_id: taskData.task_id,\n    record_id: Array.isArray(storedData) ? storedData[0]?.id : storedData.id,\n    worker_name: 'text-worker',\n    status: processedData.status,\n    duration_ms: durationMs,\n    content_length: processedData.content?.length || 0,\n    entities_found: entitiesCount,\n    sentiment: processedData.sentiment,\n    confidence: processedData.confidence,\n    completed_at: endTime.toISOString()\n  }\n};"
+      },
+      "id": "prepare-success-response",
+      "name": "Prepare Success Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1570, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/worker_metrics",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "multipleHttpHeadersAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ worker_name: 'text-worker', metric_type: 'task_completed', value: $json.duration_ms, tags: { task_id: $json.task_id, status: 'success', entities_found: $json.entities_found, sentiment: $json.sentiment } }) }}",
+        "options": {}
+      },
+      "id": "log-success-metric",
+      "name": "Log Success Metric",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1790, 200],
+      "credentials": {
+        "multipleHttpHeadersAuth": {
+          "id": "supabase-both-keys",
+          "name": "Supabase Both Keys"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Handle extraction error\nlet taskData = {};\ntry {\n  taskData = $('Prepare Task Data').first().json || {};\n} catch (e) {\n  taskData = {};\n}\n\nconst errorData = $input.first().json;\nconst endTime = new Date();\nlet durationMs = 0;\n\nif (taskData.started_at) {\n  const startTime = new Date(taskData.started_at);\n  durationMs = endTime - startTime;\n}\n\nreturn {\n  json: {\n    success: false,\n    task_id: taskData.task_id || 'unknown',\n    source: taskData.source || 'unknown',\n    worker_name: 'text-worker',\n    status: 'failed',\n    error: errorData.error?.message || errorData.message || 'Text extraction failed',\n    duration_ms: durationMs || 1,\n    completed_at: endTime.toISOString()\n  }\n};"
+      },
+      "id": "handle-error",
+      "name": "Handle Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1130, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/worker_metrics",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "multipleHttpHeadersAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ worker_name: 'text-worker', metric_type: 'task_failed', value: $json.duration_ms || 1, tags: { task_id: $json.task_id || 'unknown', error: $json.error || 'Unknown error' } }) }}",
+        "options": {}
+      },
+      "id": "log-error-metric",
+      "name": "Log Error Metric",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1350, 400],
+      "credentials": {
+        "multipleHttpHeadersAuth": {
+          "id": "supabase-both-keys",
+          "name": "Supabase Both Keys"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/dead_letter_queue",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "multipleHttpHeadersAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ (() => { const errData = $('Handle Error').first().json; return JSON.stringify({ resource_type: 'text', resource_id: errData.task_id || 'unknown-' + Date.now(), payload: { source: errData.source || 'unknown' }, error_message: errData.error || 'Unknown error', error_code: 'EXTRACTION_FAILED', status: 'pending' }); })() }}",
+        "options": {}
+      },
+      "id": "add-to-dlq",
+      "name": "Add to DLQ",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1570, 400],
+      "credentials": {
+        "multipleHttpHeadersAuth": {
+          "id": "supabase-both-keys",
+          "name": "Supabase Both Keys"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fromEmail": "gustavoferraz405@gmail.com",
+        "toEmail": "gustavoferraz405@gmail.com",
+        "subject": "🚨 Text Processing Failed - {{ $('Handle Error').first().json.task_id || 'unknown' }}",
+        "emailType": "html",
+        "html": "=<h2>🚨 Text Processing Failed</h2><table style=\"border-collapse: collapse; width: 100%; max-width: 600px;\"><tr><td style=\"padding: 8px; border: 1px solid #ddd;\"><strong>Task ID</strong></td><td style=\"padding: 8px; border: 1px solid #ddd;\">{{ $('Handle Error').first().json.task_id || 'unknown' }}</td></tr><tr><td style=\"padding: 8px; border: 1px solid #ddd;\"><strong>Source</strong></td><td style=\"padding: 8px; border: 1px solid #ddd;\">{{ $('Handle Error').first().json.source || 'unknown' }}</td></tr><tr><td style=\"padding: 8px; border: 1px solid #ddd;\"><strong>Error</strong></td><td style=\"padding: 8px; border: 1px solid #ddd; color: red;\">{{ $('Handle Error').first().json.error || 'Unknown error' }}</td></tr><tr><td style=\"padding: 8px; border: 1px solid #ddd;\"><strong>Worker</strong></td><td style=\"padding: 8px; border: 1px solid #ddd;\">text-worker</td></tr><tr><td style=\"padding: 8px; border: 1px solid #ddd;\"><strong>Time</strong></td><td style=\"padding: 8px; border: 1px solid #ddd;\">{{ new Date().toISOString() }}</td></tr></table><p style=\"margin-top: 20px; color: #666;\">This task has been added to the Dead Letter Queue for retry.</p>",
+        "options": {}
+      },
+      "id": "send-alert",
+      "name": "Send Alert Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [1790, 400],
+      "credentials": {
+        "smtp": {
+          "id": "smtp-credential",
+          "name": "SMTP"
+        }
+      },
+      "continueOnFail": true
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Prepare Task Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Task Data": {
+      "main": [
+        [
+          {
+            "node": "Check Rate Limit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Rate Limit": {
+      "main": [
+        [
+          {
+            "node": "Rate Limit OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Rate Limit OK?": {
+      "main": [
+        [
+          {
+            "node": "Log Start Metric",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Rate Limit Exceeded",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Start Metric": {
+      "main": [
+        [
+          {
+            "node": "OpenAI Text Extraction",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Text Extraction": {
+      "main": [
+        [
+          {
+            "node": "Process Extraction",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Handle Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Extraction": {
+      "main": [
+        [
+          {
+            "node": "Store in Supabase",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store in Supabase": {
+      "main": [
+        [
+          {
+            "node": "Prepare Success Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Success Response": {
+      "main": [
+        [
+          {
+            "node": "Log Success Metric",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Handle Error": {
+      "main": [
+        [
+          {
+            "node": "Log Error Metric",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Error Metric": {
+      "main": [
+        [
+          {
+            "node": "Add to DLQ",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Add to DLQ": {
+      "main": [
+        [
+          {
+            "node": "Send Alert Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "staticData": null,
+  "tags": ["worker", "text"],
+  "triggerCount": 0,
+  "pinData": {}
+}

@@ -17,13 +17,79 @@
     },
     {
       "parameters": {
-        "jsCode": "// Parse incoming results from parallel tasks\nconst items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const body = item.json.body || item.json;\n  \n  results.push({\n    json: {\n      aggregation_id: body.aggregation_id || 'agg_' + Date.now(),\n      results: body.results || [],\n      user_id: body.user_id || null,\n      aggregation_type: body.type || 'merge',\n      options: body.options || {}\n    }\n  });\n}\n\nreturn results;"
+        "method": "POST",
+        "url": "https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/rpc/check_rate_limit_sliding",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "multipleHttpHeadersAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"p_identifier\": \"data_aggregation_worker\", \"p_limit_count\": 30, \"p_window_seconds\": 60}",
+        "options": {}
+      },
+      "id": "check-rate-limit",
+      "name": "Check Rate Limit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [470, 300],
+      "credentials": {
+        "multipleHttpHeadersAuth": {
+          "id": "supabase-headers",
+          "name": "Supabase Headers Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "condition-allowed",
+              "leftValue": "={{ $json.allowed }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "rate-limit-check",
+      "name": "Rate Limit OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [690, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: 'rate_limit_exceeded', message: 'Data Aggregation worker rate limit exceeded. Please wait before retrying.', retry_after_seconds: 60 }) }}",
+        "options": {
+          "responseCode": 429
+        }
+      },
+      "id": "rate-limited-response",
+      "name": "Rate Limited Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [910, 500]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse incoming results from parallel tasks\nconst items = $input.all();\nconst results = [];\nconst startTime = Date.now();\n\nfor (const item of items) {\n  const body = item.json.body || item.json;\n  \n  results.push({\n    json: {\n      aggregation_id: body.aggregation_id || 'agg_' + Date.now(),\n      results: body.results || [],\n      user_id: body.user_id || null,\n      aggregation_type: body.type || 'merge',\n      options: body.options || {},\n      _start_time: startTime\n    }\n  });\n}\n\nreturn results;"
       },
       "id": "parse-input",
       "name": "Parse Input",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [470, 300]
+      "position": [910, 200]
     },
     {
       "parameters": {
@@ -33,7 +99,7 @@
       "name": "Merge Results",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [690, 300]
+      "position": [1130, 200]
     },
     {
       "parameters": {
@@ -62,7 +128,7 @@
       "name": "Has Conflicts?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [910, 300]
+      "position": [1350, 200]
     },
     {
       "parameters": {
@@ -72,7 +138,7 @@
       "name": "Prepare Resolution Payload",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1130, 200]
+      "position": [1570, 100]
     },
     {
       "parameters": {
@@ -92,19 +158,30 @@
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify($json.openai_payload) }}",
-        "options": {}
+        "options": {
+          "retry": {
+            "maxTries": 3,
+            "retryInterval": 1000,
+            "retryIntervalUnit": "milliseconds",
+            "backoffFactor": 2,
+            "retryOn": "statusCodes",
+            "statusCodesToRetry": "429,500,502,503,504"
+          },
+          "timeout": 120000
+        }
       },
       "id": "resolve-conflicts",
       "name": "AI Conflict Resolution",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1350, 200],
+      "position": [1790, 100],
       "credentials": {
         "httpHeaderAuth": {
           "id": "openai-credential",
           "name": "OpenAI API Key"
         }
-      }
+      },
+      "onError": "continueErrorOutput"
     },
     {
       "parameters": {
@@ -114,7 +191,17 @@
       "name": "Apply Resolutions",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1570, 200]
+      "position": [2010, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Handle OpenAI error - mark for manual review\nconst items = $input.all();\nconst prevItems = $('Prepare Resolution Payload').all();\nconst results = [];\n\nfor (let i = 0; i < items.length; i++) {\n  const inputData = prevItems[i]?.json || items[i].json;\n  \n  results.push({\n    json: {\n      ...inputData,\n      final_data: inputData.merged_data,\n      ai_resolutions: null,\n      needs_manual_review: true,\n      error: 'AI conflict resolution failed'\n    }\n  });\n}\n\nreturn results;"
+      },
+      "id": "handle-ai-error",
+      "name": "Handle AI Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2010, 200]
     },
     {
       "parameters": {
@@ -124,7 +211,7 @@
       "name": "No Conflicts",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1130, 400]
+      "position": [1570, 300]
     },
     {
       "parameters": {
@@ -134,58 +221,155 @@
       "name": "Cross Validation",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1790, 300]
+      "position": [2230, 200]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "condition-validation-passed",
+              "leftValue": "={{ $json.cross_validation.passed }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "validation-check",
+      "name": "Validation Passed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [2450, 200]
     },
     {
       "parameters": {
         "method": "POST",
-        "url": "https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/processing_logs",
+        "url": "https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/worker_metrics",
         "authentication": "predefinedCredentialType",
-        "nodeCredentialType": "httpHeaderAuth",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            },
-            {
-              "name": "apikey",
-              "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxreWl4YWlwcGRtdGp5aXp0dXp3Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2OTcwMjY4OSwiZXhwIjoyMDg1Mjc4Njg5fQ.nD4GhFIFXs-1qvdc42vAO1uumgTfGgiABsB9OgrOJHo"
-            },
-            {
-              "name": "Prefer",
-              "value": "return=minimal"
-            }
-          ]
-        },
+        "nodeCredentialType": "multipleHttpHeadersAuth",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ resource_type: 'workflow', resource_id: '00000000-0000-0000-0000-000000000000', user_id: $json.user_id, action: 'data_aggregation', status: $json.cross_validation.passed ? 'completed' : 'started', details: { aggregation_id: $json.aggregation_id, sources_count: $json.results.length, conflicts_count: $json.conflicts.length, consistency_score: $json.cross_validation.average_consistency, needs_manual_review: $json.needs_manual_review } }) }}",
+        "jsonBody": "={{ JSON.stringify({ worker_name: 'data_aggregation', metric_type: 'task_success', value: Date.now() - $json._start_time, tags: { task_id: $json.aggregation_id, sources_count: $json.results.length, conflicts_count: $json.conflicts.length, consistency_score: $json.cross_validation.average_consistency, needs_manual_review: $json.needs_manual_review } }) }}",
         "options": {}
       },
-      "id": "log-aggregation",
-      "name": "Log Aggregation",
+      "id": "log-success-metric",
+      "name": "Log Success Metric",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [2010, 300],
+      "position": [2670, 100],
       "credentials": {
-        "httpHeaderAuth": {
-          "id": "supabase-credential",
-          "name": "Supabase Service Key"
+        "multipleHttpHeadersAuth": {
+          "id": "supabase-headers",
+          "name": "Supabase Headers Auth"
         }
-      }
+      },
+      "onError": "continueErrorOutput"
     },
     {
       "parameters": {
         "respondWith": "json",
         "responseBody": "={{ JSON.stringify({ success: true, aggregation_id: $('Cross Validation').first().json.aggregation_id, final_data: $('Cross Validation').first().json.final_data, conflicts_resolved: $('Cross Validation').first().json.conflicts.length, consistency_score: $('Cross Validation').first().json.cross_validation.average_consistency, needs_manual_review: $('Cross Validation').first().json.needs_manual_review, provenance: $('Cross Validation').first().json.provenance }) }}"
       },
-      "id": "response",
-      "name": "Response",
+      "id": "success-response",
+      "name": "Success Response",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [2230, 300]
+      "position": [2890, 100]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/worker_metrics",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "multipleHttpHeadersAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ worker_name: 'data_aggregation', metric_type: 'task_failure', value: Date.now() - $json._start_time, tags: { task_id: $json.aggregation_id, sources_count: $json.results.length, conflicts_count: $json.conflicts.length, consistency_score: $json.cross_validation.average_consistency, error: 'Cross validation failed - low consistency score' } }) }}",
+        "options": {}
+      },
+      "id": "log-failure-metric",
+      "name": "Log Failure Metric",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2670, 300],
+      "credentials": {
+        "multipleHttpHeadersAuth": {
+          "id": "supabase-headers",
+          "name": "Supabase Headers Auth"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/dead_letter_queue",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "multipleHttpHeadersAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ task_type: 'data_aggregation', task_payload: { aggregation_id: $json.aggregation_id, results: $json.results, options: $json.options, user_id: $json.user_id }, error_message: 'Cross validation failed - consistency score: ' + $json.cross_validation.average_consistency, retry_count: 0, max_retries: 3 }) }}",
+        "options": {}
+      },
+      "id": "send-to-dlq",
+      "name": "Send to DLQ",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2890, 300],
+      "credentials": {
+        "multipleHttpHeadersAuth": {
+          "id": "supabase-headers",
+          "name": "Supabase Headers Auth"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "fromEmail": "gustavoferraz405@gmail.com",
+        "toEmail": "gustavoferraz405@gmail.com",
+        "subject": "=Data Aggregation Alert: Validation Failed - {{ $json.aggregation_id }}",
+        "emailType": "html",
+        "html": "=<h2>Data Aggregation Validation Failed</h2><p><strong>Aggregation ID:</strong> {{ $json.aggregation_id }}</p><p><strong>Consistency Score:</strong> {{ $json.cross_validation.average_consistency }}</p><p><strong>Sources Count:</strong> {{ $json.results.length }}</p><p><strong>Conflicts Count:</strong> {{ $json.conflicts.length }}</p><p><strong>Needs Manual Review:</strong> {{ $json.needs_manual_review }}</p><p>This task has been sent to the Dead Letter Queue for retry.</p>",
+        "options": {}
+      },
+      "id": "send-alert-email",
+      "name": "Send Alert Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [3110, 300],
+      "credentials": {
+        "smtp": {
+          "id": "smtp-credential",
+          "name": "SMTP Gmail"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: 'validation_failed', aggregation_id: $('Cross Validation').first().json.aggregation_id, consistency_score: $('Cross Validation').first().json.cross_validation.average_consistency, message: 'Data aggregation failed cross-validation. Task sent to DLQ for retry.', needs_manual_review: true }) }}",
+        "options": {
+          "responseCode": 422
+        }
+      },
+      "id": "failure-response",
+      "name": "Failure Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [3330, 300]
     }
   ],
   "connections": {
@@ -193,7 +377,36 @@
       "main": [
         [
           {
+            "node": "Check Rate Limit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Rate Limit": {
+      "main": [
+        [
+          {
+            "node": "Rate Limit OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Rate Limit OK?": {
+      "main": [
+        [
+          {
             "node": "Parse Input",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Rate Limited Response",
             "type": "main",
             "index": 0
           }
@@ -259,10 +472,28 @@
             "type": "main",
             "index": 0
           }
+        ],
+        [
+          {
+            "node": "Handle AI Error",
+            "type": "main",
+            "index": 0
+          }
         ]
       ]
     },
     "Apply Resolutions": {
+      "main": [
+        [
+          {
+            "node": "Cross Validation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Handle AI Error": {
       "main": [
         [
           {
@@ -288,18 +519,69 @@
       "main": [
         [
           {
-            "node": "Log Aggregation",
+            "node": "Validation Passed?",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Log Aggregation": {
+    "Validation Passed?": {
       "main": [
         [
           {
-            "node": "Response",
+            "node": "Log Success Metric",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log Failure Metric",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Success Metric": {
+      "main": [
+        [
+          {
+            "node": "Success Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Failure Metric": {
+      "main": [
+        [
+          {
+            "node": "Send to DLQ",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send to DLQ": {
+      "main": [
+        [
+          {
+            "node": "Send Alert Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Alert Email": {
+      "main": [
+        [
+          {
+            "node": "Failure Response",
             "type": "main",
             "index": 0
           }

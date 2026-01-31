@@ -1,29 +1,221 @@
 {
-  "name": "Document Worker",
+  "name": "Document Processing Worker",
   "nodes": [
     {
-      "parameters": {
-        "httpMethod": "POST",
-        "path": "process-document",
-        "responseMode": "responseNode",
-        "options": {}
-      },
-      "id": "webhook-trigger",
-      "name": "Webhook Trigger",
-      "type": "n8n-nodes-base.webhook",
-      "typeVersion": 2,
-      "position": [250, 300],
-      "webhookId": "document-worker"
+      "parameters": {},
+      "id": "start",
+      "name": "Start",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [250, 300]
     },
     {
       "parameters": {
-        "jsCode": "// Extract task data\nconst body = $json.body || $json;\nconst payload = body.payload || body;\n\nreturn {\n  json: {\n    task_id: body.task_id,\n    filename: payload.filename,\n    file_url: payload.file_url,\n    mime_type: payload.mime_type,\n    user_id: payload.user_id\n  }\n};"
+        "method": "POST",
+        "url": "https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/rpc/check_rate_limit_sliding",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "multipleHttpHeadersAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ p_identifier: $json.user_id || 'anonymous', p_endpoint: 'document-worker', p_limit: 30, p_window_seconds: 60 }) }}",
+        "options": {}
       },
-      "id": "parse-input",
-      "name": "Parse Input",
+      "id": "check-rate-limit",
+      "name": "Check Rate Limit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [470, 500],
+      "credentials": {
+        "multipleHttpHeadersAuth": {
+          "id": "supabase-both-keys",
+          "name": "Supabase Both Keys"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "rate-limit-allowed",
+              "leftValue": "={{ $json.allowed !== false }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "rate-limit-check",
+      "name": "Rate Limit OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [690, 500]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Rate limit exceeded - return error\nconst taskData = $('Prepare Task Data').first().json;\nconst rateLimitData = $('Check Rate Limit').first().json;\n\nreturn {\n  json: {\n    success: false,\n    task_id: taskData.task_id,\n    filename: taskData.filename,\n    worker_name: 'document-worker',\n    status: 'rate_limited',\n    error: `Rate limit exceeded. Current: ${rateLimitData.current_count || 'unknown'}, Limit: 30/min. Retry after: ${rateLimitData.reset_at || 'unknown'}`,\n    retry_after: rateLimitData.reset_at,\n    completed_at: new Date().toISOString()\n  }\n};"
+      },
+      "id": "rate-limit-exceeded",
+      "name": "Rate Limit Exceeded",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [910, 600]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract task data from parent workflow\nconst inputData = $input.first().json;\n\nconst taskData = {\n  task_id: inputData.task_id || inputData.id,\n  filename: inputData.payload?.filename || inputData.filename,\n  file_url: inputData.payload?.file_url || inputData.file_url,\n  base64_content: inputData.payload?.base64_content || inputData.base64_content,\n  mime_type: inputData.payload?.mime_type || inputData.mime_type || 'image/png',\n  user_id: inputData.payload?.user_id || inputData.user_id,\n  priority: inputData.priority || 2,\n  started_at: new Date().toISOString(),\n  worker_name: 'document-worker'\n};\n\nif (!taskData.file_url && !taskData.base64_content) {\n  throw new Error('Either file_url or base64_content is required');\n}\n\nreturn { json: taskData };"
+      },
+      "id": "prepare-task",
+      "name": "Prepare Task Data",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [470, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "has-base64",
+              "leftValue": "={{ $('Prepare Task Data').first().json.base64_content }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-base64",
+      "name": "Has Base64?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [690, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $('Prepare Task Data').first().json.file_url }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "multipleHttpHeadersAuth",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          },
+          "retry": {
+            "enabled": true,
+            "maxRetries": 3,
+            "waitBetweenRetries": 1000,
+            "backoffFactor": 2
+          }
+        }
+      },
+      "id": "download-file",
+      "name": "Download File",
+      "credentials": {
+        "multipleHttpHeadersAuth": {
+          "id": "supabase-both-keys",
+          "name": "Supabase Both Keys"
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [910, 400],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Convert downloaded binary to base64 using n8n helpers\nconst taskData = $('Prepare Task Data').first().json;\n\n// Get binary data buffer using n8n helper\nconst binaryPropertyName = 'data';\nconst binaryDataBuffer = await this.helpers.getBinaryDataBuffer(0, binaryPropertyName);\n\n// Convert buffer to base64\nconst base64Content = binaryDataBuffer.toString('base64');\n\n// Get mime type from binary metadata\nconst binaryData = $input.first().binary[binaryPropertyName];\nconst mimeType = binaryData?.mimeType || taskData.mime_type;\n\nif (!base64Content) {\n  throw new Error('Failed to convert binary to base64');\n}\n\nreturn {\n  json: {\n    ...taskData,\n    base64_content: base64Content,\n    mime_type: mimeType\n  }\n};"
+      },
+      "id": "convert-to-base64",
+      "name": "Convert to Base64",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1130, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Pass through existing base64 content\nconst taskData = $('Prepare Task Data').first().json;\nreturn { json: taskData };"
+      },
+      "id": "use-existing-base64",
+      "name": "Use Existing Base64",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [910, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/worker_metrics",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "multipleHttpHeadersAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ worker_name: 'document-worker', metric_type: 'task_started', value: 1, tags: { task_id: $json.task_id, filename: $json.filename } }) }}",
+        "options": {}
+      },
+      "id": "log-start-metric",
+      "name": "Log Start Metric",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1350, 300],
+      "credentials": {
+        "multipleHttpHeadersAuth": {
+          "id": "supabase-both-keys",
+          "name": "Supabase Both Keys"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare OpenAI Vision payload with base64 image\n// Get data from Convert to Base64 or Use Existing Base64 (not from Log Start Metric which returns empty)\nlet taskData;\ntry {\n  taskData = $('Convert to Base64').first().json;\n} catch (e) {\n  taskData = $('Use Existing Base64').first().json;\n}\n\nconst systemPrompt = `You are a tax document processing expert. Analyze the provided image and:\n1. Identify the document type (W-2, 1099, 1099-MISC, 1099-INT, 1099-DIV, 1099-NEC, Invoice, Receipt, Bank Statement, or Other)\n2. Extract ALL text and data from the document\n3. Structure the extracted data appropriately for the document type\n\nRespond ONLY with valid JSON in this format:\n{\n  \"document_type\": \"W-2|1099|1099-MISC|1099-INT|1099-DIV|1099-NEC|Invoice|Receipt|Bank Statement|Other\",\n  \"confidence\": 0.95,\n  \"extracted_data\": {},\n  \"raw_text\": \"Full OCR text here\",\n  \"ocr_confidence\": 0.92\n}`;\n\n// Always use base64 data URL for reliable image processing\nconst imageUrl = 'data:' + taskData.mime_type + ';base64,' + taskData.base64_content;\n\nreturn {\n  json: {\n    ...taskData,\n    openai_payload: {\n      model: 'gpt-4o',\n      messages: [\n        { role: 'system', content: systemPrompt },\n        {\n          role: 'user',\n          content: [\n            { type: 'text', text: 'Analyze this tax document and extract all information:' },\n            { type: 'image_url', image_url: { url: imageUrl } }\n          ]\n        }\n      ],\n      max_tokens: 4096,\n      temperature: 0.1\n    }\n  }\n};"
+      },
+      "id": "prepare-openai-payload",
+      "name": "Prepare OpenAI Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1570, 300]
     },
     {
       "parameters": {
@@ -42,47 +234,52 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"model\": \"gpt-4o-mini\",\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"You are a document classification and data extraction expert. Analyze the document image and extract all relevant information. Return a JSON object with: document_type (W-2, 1099, Invoice, Receipt, Contract, or Other), confidence (0-1), and extracted_data (object with all extracted fields like names, amounts, dates, addresses, etc). Be thorough and extract ALL visible information.\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": [\n        {\n          \"type\": \"text\",\n          \"text\": \"Analyze this document and extract all information. Filename: {{ $json.filename }}\"\n        },\n        {\n          \"type\": \"image_url\",\n          \"image_url\": {\n            \"url\": \"{{ $json.file_url }}\"\n          }\n        }\n      ]\n    }\n  ],\n  \"max_tokens\": 2000,\n  \"response_format\": { \"type\": \"json_object\" }\n}",
-        "options": {}
+        "jsonBody": "={{ JSON.stringify($json.openai_payload) }}",
+        "options": {
+          "timeout": 120000,
+          "retry": {
+            "enabled": true,
+            "maxRetries": 3,
+            "waitBetweenRetries": 1000,
+            "backoffFactor": 2
+          }
+        }
       },
-      "id": "openai-classify",
-      "name": "OpenAI Classify",
+      "id": "openai-vision",
+      "name": "OpenAI GPT-4 Vision OCR",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [690, 300],
+      "position": [1790, 300],
       "credentials": {
         "httpHeaderAuth": {
           "id": "openai-credential",
           "name": "OpenAI API Key"
         }
-      }
+      },
+      "onError": "continueErrorOutput"
     },
     {
       "parameters": {
-        "jsCode": "// Parse OpenAI response\nconst prevData = $('Parse Input').first().json;\nconst response = $json;\n\nlet classification = {};\ntry {\n  const content = response.choices[0].message.content;\n  classification = JSON.parse(content);\n} catch (e) {\n  classification = {\n    document_type: 'Other',\n    confidence: 0.5,\n    extracted_data: { error: 'Failed to parse response' }\n  };\n}\n\n// Determine status based on confidence\nlet status = 'completed';\nif (classification.confidence < 0.7) {\n  status = 'needs_review';\n}\n\nreturn {\n  json: {\n    ...prevData,\n    document_type: classification.document_type || 'Other',\n    confidence: classification.confidence || 0.5,\n    extracted_data: classification.extracted_data || {},\n    status: status\n  }\n};"
+        "jsCode": "// Parse OpenAI response and mask sensitive data\nconst taskData = $('Prepare OpenAI Payload').first().json;\nconst aiResult = $input.first().json;\n\n// Function to mask SSN (XXX-XX-1234)\nfunction maskSSN(text) {\n  return text.replace(/\\b(\\d{3})[-\\s]?(\\d{2})[-\\s]?(\\d{4})\\b/g, 'XXX-XX-$3');\n}\n\n// Function to mask EIN/Tax ID (XX-XXX1234)\nfunction maskEIN(text) {\n  return text.replace(/\\b(\\d{2})[-]?(\\d{7})\\b/g, 'XX-XXX$2'.slice(-4));\n}\n\n// Function to mask account numbers (keep last 4)\nfunction maskAccountNumber(text) {\n  return text.replace(/\\b(\\d{8,17})\\b/g, (match) => '****' + match.slice(-4));\n}\n\n// Apply all masks to text\nfunction maskSensitiveText(text) {\n  if (!text) return text;\n  let masked = maskSSN(text);\n  masked = maskEIN(masked);\n  return masked;\n}\n\n// Recursively mask sensitive data in objects\nfunction maskSensitiveData(obj) {\n  if (!obj || typeof obj !== 'object') return obj;\n  \n  const sensitiveKeys = ['ssn', 'social_security', 'tax_id', 'ein', 'tin', 'itin', 'account_number', 'routing_number'];\n  const result = Array.isArray(obj) ? [] : {};\n  \n  for (const [key, value] of Object.entries(obj)) {\n    const lowerKey = key.toLowerCase();\n    \n    if (sensitiveKeys.some(sk => lowerKey.includes(sk))) {\n      if (typeof value === 'string') {\n        result[key] = '***-**-' + value.replace(/[^0-9]/g, '').slice(-4);\n      } else {\n        result[key] = value;\n      }\n    } else if (typeof value === 'object' && value !== null) {\n      result[key] = maskSensitiveData(value);\n    } else if (typeof value === 'string') {\n      result[key] = maskSensitiveText(value);\n    } else {\n      result[key] = value;\n    }\n  }\n  \n  return result;\n}\n\nlet ocrResult;\ntry {\n  let responseText = aiResult.choices?.[0]?.message?.content || '{}';\n  \n  // Clean JSON from markdown code blocks\n  if (responseText.includes('```json')) {\n    responseText = responseText.replace(/```json\\n?/g, '').replace(/```\\n?/g, '');\n  } else if (responseText.includes('```')) {\n    responseText = responseText.replace(/```\\n?/g, '');\n  }\n  \n  ocrResult = JSON.parse(responseText.trim());\n} catch (e) {\n  ocrResult = {\n    document_type: 'Other',\n    confidence: 0.5,\n    extracted_data: {},\n    raw_text: aiResult.choices?.[0]?.message?.content || '',\n    ocr_confidence: 0.5,\n    parse_error: e.message\n  };\n}\n\n// Apply data masking to extracted_data and raw_text\nconst maskedExtractedData = maskSensitiveData(ocrResult.extracted_data || {});\nconst maskedRawText = maskSensitiveText(ocrResult.raw_text || '');\n\n// Determine status based on confidence\nlet status = 'completed';\nif (ocrResult.confidence < 0.7) {\n  status = 'needs_review';\n}\n\nreturn {\n  json: {\n    task_id: taskData.task_id,\n    user_id: taskData.user_id,\n    filename: taskData.filename,\n    file_url: taskData.file_url,\n    mime_type: taskData.mime_type,\n    type: ocrResult.document_type || 'Other',\n    extracted_data: maskedExtractedData,\n    raw_text: maskedRawText,\n    ocr_confidence: ocrResult.ocr_confidence || ocrResult.confidence,\n    classification_confidence: ocrResult.confidence,\n    status: status,\n    data_masked: true,\n    processed_at: new Date().toISOString()\n  }\n};"
       },
-      "id": "parse-response",
-      "name": "Parse Response",
+      "id": "process-ocr-result",
+      "name": "Process OCR Result",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [910, 300]
+      "position": [2010, 200]
     },
     {
       "parameters": {
         "method": "POST",
         "url": "https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/documents",
         "authentication": "predefinedCredentialType",
-        "nodeCredentialType": "httpHeaderAuth",
+        "nodeCredentialType": "multipleHttpHeadersAuth",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
             {
               "name": "Content-Type",
               "value": "application/json"
-            },
-            {
-              "name": "apikey",
-              "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxreWl4YWlwcGRtdGp5aXp0dXp3Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2OTcwMjY4OSwiZXhwIjoyMDg1Mjc4Njg5fQ.nD4GhFIFXs-1qvdc42vAO1uumgTfGgiABsB9OgrOJHo"
             },
             {
               "name": "Prefer",
@@ -92,83 +289,590 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({\n  user_id: $json.user_id || null,\n  filename: $json.filename,\n  file_url: $json.file_url,\n  mime_type: $json.mime_type,\n  type: $json.document_type,\n  extracted_data: $json.extracted_data,\n  classification_confidence: $json.confidence,\n  status: $json.status,\n  processed_at: new Date().toISOString()\n}) }}",
+        "jsonBody": "={{ JSON.stringify({\n  user_id: $json.user_id || null,\n  filename: $json.filename,\n  file_url: $json.file_url,\n  mime_type: $json.mime_type,\n  type: $json.type,\n  extracted_data: $json.extracted_data,\n  raw_text: $json.raw_text,\n  ocr_confidence: $json.ocr_confidence,\n  classification_confidence: $json.classification_confidence,\n  status: $json.status,\n  processed_at: $json.processed_at\n}) }}",
         "options": {}
       },
-      "id": "save-document",
-      "name": "Save Document",
+      "id": "store-document",
+      "name": "Store in Supabase",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1130, 300],
+      "position": [2230, 200],
       "credentials": {
-        "httpHeaderAuth": {
-          "id": "supabase-credential",
-          "name": "Supabase Service Key"
+        "multipleHttpHeadersAuth": {
+          "id": "supabase-both-keys",
+          "name": "Supabase Both Keys"
         }
       }
     },
     {
       "parameters": {
-        "respondWith": "json",
-        "responseBody": "={{ JSON.stringify({\n  success: true,\n  document_id: $json[0]?.id,\n  document_type: $('Parse Response').first().json.document_type,\n  status: $('Parse Response').first().json.status\n}) }}"
+        "jsCode": "// Prepare content for embedding generation\nconst ocrResult = $('Process OCR Result').first().json;\nconst storedData = $input.first().json;\nconst docId = Array.isArray(storedData) ? storedData[0]?.id : storedData.id;\n\n// Build searchable content from raw_text and extracted_data\nlet content = '';\n\n// Add raw text\nif (ocrResult.raw_text) {\n  content += ocrResult.raw_text + '\\n\\n';\n}\n\n// Add extracted data as searchable text\nif (ocrResult.extracted_data && Object.keys(ocrResult.extracted_data).length > 0) {\n  content += 'Extracted Data:\\n';\n  for (const [key, value] of Object.entries(ocrResult.extracted_data)) {\n    if (value !== null && value !== undefined) {\n      content += `${key}: ${typeof value === 'object' ? JSON.stringify(value) : value}\\n`;\n    }\n  }\n}\n\n// Truncate content to fit embedding model limits (8191 tokens ~ 32000 chars)\nconst maxChars = 30000;\nif (content.length > maxChars) {\n  content = content.substring(0, maxChars);\n}\n\nreturn {\n  json: {\n    document_id: docId,\n    user_id: ocrResult.user_id,\n    filename: ocrResult.filename,\n    document_type: ocrResult.type,\n    content: content.trim(),\n    content_length: content.length,\n    status: ocrResult.status,\n    classification_confidence: ocrResult.classification_confidence\n  }\n};"
       },
-      "id": "webhook-response",
-      "name": "Webhook Response",
-      "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1.1,
-      "position": [1350, 300]
+      "id": "prepare-embedding-content",
+      "name": "Prepare Embedding Content",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2450, 200]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-content",
+              "leftValue": "={{ $json.content_length }}",
+              "rightValue": 50,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-content-length",
+      "name": "Has Enough Content?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [2670, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/embeddings",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  model: 'text-embedding-3-small',\n  input: $json.content,\n  dimensions: 1536\n}) }}",
+        "options": {
+          "timeout": 60000,
+          "retry": {
+            "enabled": true,
+            "maxRetries": 3,
+            "waitBetweenRetries": 1000,
+            "backoffFactor": 2
+          }
+        }
+      },
+      "id": "generate-embedding",
+      "name": "Generate Embedding",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2890, 100],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "openai-credential",
+          "name": "OpenAI API Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare embedding data for storage\nconst embeddingResult = $input.first().json;\nconst contentData = $('Prepare Embedding Content').first().json;\n\nconst embedding = embeddingResult.data?.[0]?.embedding || [];\n\nreturn {\n  json: {\n    document_id: contentData.document_id,\n    user_id: contentData.user_id,\n    content: contentData.content,\n    document_type: contentData.document_type,\n    embedding: embedding,\n    embedding_model: 'text-embedding-3-small',\n    tokens_used: embeddingResult.usage?.total_tokens || 0\n  }\n};"
+      },
+      "id": "prepare-embedding-storage",
+      "name": "Prepare Embedding Storage",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3110, 100]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/document_embeddings",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "multipleHttpHeadersAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  document_id: $json.document_id,\n  user_id: $json.user_id,\n  content: $json.content,\n  document_type: $json.document_type,\n  embedding: $json.embedding,\n  embedding_model: $json.embedding_model\n}) }}",
+        "options": {}
+      },
+      "id": "store-embedding",
+      "name": "Store Embedding",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [3330, 100],
+      "credentials": {
+        "multipleHttpHeadersAuth": {
+          "id": "supabase-both-keys",
+          "name": "Supabase Both Keys"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare success response with embedding info\nconst taskData = $('Prepare OpenAI Payload').first().json;\nconst processedData = $('Process OCR Result').first().json;\nconst contentData = $('Prepare Embedding Content').first().json;\n\nconst endTime = new Date();\nconst startTime = new Date(taskData.started_at);\nconst durationMs = endTime - startTime;\n\nreturn {\n  json: {\n    success: true,\n    task_id: taskData.task_id,\n    document_id: contentData.document_id,\n    worker_name: 'document-worker',\n    document_type: processedData.type,\n    status: processedData.status,\n    confidence: processedData.classification_confidence,\n    embedding_generated: true,\n    duration_ms: durationMs,\n    completed_at: endTime.toISOString()\n  }\n};"
+      },
+      "id": "prepare-success-with-embedding",
+      "name": "Prepare Success (With Embedding)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3550, 100]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare success response without embedding (content too short)\nconst taskData = $('Prepare OpenAI Payload').first().json;\nconst processedData = $('Process OCR Result').first().json;\nconst contentData = $('Prepare Embedding Content').first().json;\n\nconst endTime = new Date();\nconst startTime = new Date(taskData.started_at);\nconst durationMs = endTime - startTime;\n\nreturn {\n  json: {\n    success: true,\n    task_id: taskData.task_id,\n    document_id: contentData.document_id,\n    worker_name: 'document-worker',\n    document_type: processedData.type,\n    status: processedData.status,\n    confidence: processedData.classification_confidence,\n    embedding_generated: false,\n    embedding_skipped_reason: 'Content too short for meaningful embedding',\n    duration_ms: durationMs,\n    completed_at: endTime.toISOString()\n  }\n};"
+      },
+      "id": "prepare-success-no-embedding",
+      "name": "Prepare Success (No Embedding)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2890, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/worker_metrics",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "multipleHttpHeadersAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ worker_name: 'document-worker', metric_type: 'task_completed', value: $json.duration_ms, tags: { task_id: $json.task_id, document_type: $json.document_type, embedding_generated: $json.embedding_generated, status: 'success' } }) }}",
+        "options": {}
+      },
+      "id": "log-success-metric",
+      "name": "Log Success Metric",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [3770, 200],
+      "credentials": {
+        "multipleHttpHeadersAuth": {
+          "id": "supabase-both-keys",
+          "name": "Supabase Both Keys"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Handle OCR error - try multiple sources for task data\nlet taskData = {};\ntry {\n  taskData = $('Prepare OpenAI Payload').first().json || {};\n} catch (e) {\n  try {\n    taskData = $('Prepare Task Data').first().json || {};\n  } catch (e2) {\n    try {\n      taskData = $('Convert to Base64').first().json || {};\n    } catch (e3) {\n      taskData = {};\n    }\n  }\n}\n\nconst errorData = $input.first().json;\nconst endTime = new Date();\nlet durationMs = 0;\n\nif (taskData.started_at) {\n  const startTime = new Date(taskData.started_at);\n  durationMs = endTime - startTime;\n}\n\nreturn {\n  json: {\n    success: false,\n    task_id: taskData.task_id || 'unknown',\n    filename: taskData.filename || 'unknown',\n    file_url: taskData.file_url || 'unknown',\n    worker_name: 'document-worker',\n    status: 'failed',\n    error: errorData.error?.message || errorData.message || errorData.error?.description || 'Document processing failed',\n    duration_ms: durationMs || 1,\n    completed_at: endTime.toISOString()\n  }\n};"
+      },
+      "id": "handle-error",
+      "name": "Handle Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2010, 500]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/worker_metrics",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "multipleHttpHeadersAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ worker_name: 'document-worker', metric_type: 'task_failed', value: $json.duration_ms || 1, tags: { task_id: $json.task_id || 'unknown', error: $json.error || 'Unknown error' } }) }}",
+        "options": {}
+      },
+      "id": "log-error-metric",
+      "name": "Log Error Metric",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2230, 500],
+      "credentials": {
+        "multipleHttpHeadersAuth": {
+          "id": "supabase-both-keys",
+          "name": "Supabase Both Keys"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/dead_letter_queue",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "multipleHttpHeadersAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ (() => { const errData = $('Handle Error').first().json; return JSON.stringify({ resource_type: 'document', resource_id: errData.task_id || 'unknown-' + Date.now(), payload: { filename: errData.filename || 'unknown', file_url: errData.file_url || 'unknown' }, error_message: errData.error || 'Unknown error', error_code: 'OCR_FAILED', status: 'pending' }); })() }}",
+        "options": {}
+      },
+      "id": "add-to-dlq",
+      "name": "Add to DLQ",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2450, 500],
+      "credentials": {
+        "multipleHttpHeadersAuth": {
+          "id": "supabase-both-keys",
+          "name": "Supabase Both Keys"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fromEmail": "gustavoferraz405@gmail.com",
+        "toEmail": "gustavoferraz405@gmail.com",
+        "subject": "🚨 Document Processing Failed - {{ $('Handle Error').first().json.task_id || 'unknown' }}",
+        "emailType": "html",
+        "html": "=<h2>🚨 Document Processing Failed</h2><table style=\"border-collapse: collapse; width: 100%; max-width: 600px;\"><tr><td style=\"padding: 8px; border: 1px solid #ddd;\"><strong>Task ID</strong></td><td style=\"padding: 8px; border: 1px solid #ddd;\">{{ $('Handle Error').first().json.task_id || 'unknown' }}</td></tr><tr><td style=\"padding: 8px; border: 1px solid #ddd;\"><strong>Filename</strong></td><td style=\"padding: 8px; border: 1px solid #ddd;\">{{ $('Handle Error').first().json.filename || 'unknown' }}</td></tr><tr><td style=\"padding: 8px; border: 1px solid #ddd;\"><strong>Error</strong></td><td style=\"padding: 8px; border: 1px solid #ddd; color: red;\">{{ $('Handle Error').first().json.error || 'Unknown error' }}</td></tr><tr><td style=\"padding: 8px; border: 1px solid #ddd;\"><strong>Worker</strong></td><td style=\"padding: 8px; border: 1px solid #ddd;\">document-worker</td></tr><tr><td style=\"padding: 8px; border: 1px solid #ddd;\"><strong>Time</strong></td><td style=\"padding: 8px; border: 1px solid #ddd;\">{{ new Date().toISOString() }}</td></tr></table><p style=\"margin-top: 20px; color: #666;\">This task has been added to the Dead Letter Queue for retry.</p>",
+        "options": {}
+      },
+      "id": "send-alert",
+      "name": "Send Alert Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [2670, 500],
+      "credentials": {
+        "smtp": {
+          "id": "smtp-credential",
+          "name": "SMTP"
+        }
+      },
+      "continueOnFail": true
     }
   ],
   "connections": {
-    "Webhook Trigger": {
+    "Start": {
       "main": [
         [
           {
-            "node": "Parse Input",
+            "node": "Prepare Task Data",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Parse Input": {
+    "Prepare Task Data": {
       "main": [
         [
           {
-            "node": "OpenAI Classify",
+            "node": "Check Rate Limit",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "OpenAI Classify": {
+    "Check Rate Limit": {
       "main": [
         [
           {
-            "node": "Parse Response",
+            "node": "Rate Limit OK?",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Parse Response": {
+    "Rate Limit OK?": {
       "main": [
         [
           {
-            "node": "Save Document",
+            "node": "Has Base64?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Rate Limit Exceeded",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Save Document": {
+    "Has Base64?": {
       "main": [
         [
           {
-            "node": "Webhook Response",
+            "node": "Use Existing Base64",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Download File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download File": {
+      "main": [
+        [
+          {
+            "node": "Convert to Base64",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Handle Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Convert to Base64": {
+      "main": [
+        [
+          {
+            "node": "Log Start Metric",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Use Existing Base64": {
+      "main": [
+        [
+          {
+            "node": "Log Start Metric",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Start Metric": {
+      "main": [
+        [
+          {
+            "node": "Prepare OpenAI Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare OpenAI Payload": {
+      "main": [
+        [
+          {
+            "node": "OpenAI GPT-4 Vision OCR",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI GPT-4 Vision OCR": {
+      "main": [
+        [
+          {
+            "node": "Process OCR Result",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Handle Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process OCR Result": {
+      "main": [
+        [
+          {
+            "node": "Store in Supabase",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store in Supabase": {
+      "main": [
+        [
+          {
+            "node": "Prepare Embedding Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Embedding Content": {
+      "main": [
+        [
+          {
+            "node": "Has Enough Content?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Enough Content?": {
+      "main": [
+        [
+          {
+            "node": "Generate Embedding",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Success (No Embedding)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Embedding": {
+      "main": [
+        [
+          {
+            "node": "Prepare Embedding Storage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Embedding Storage": {
+      "main": [
+        [
+          {
+            "node": "Store Embedding",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store Embedding": {
+      "main": [
+        [
+          {
+            "node": "Prepare Success (With Embedding)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Success (With Embedding)": {
+      "main": [
+        [
+          {
+            "node": "Log Success Metric",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Success (No Embedding)": {
+      "main": [
+        [
+          {
+            "node": "Log Success Metric",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Handle Error": {
+      "main": [
+        [
+          {
+            "node": "Log Error Metric",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Error Metric": {
+      "main": [
+        [
+          {
+            "node": "Add to DLQ",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Add to DLQ": {
+      "main": [
+        [
+          {
+            "node": "Send Alert Email",
             "type": "main",
             "index": 0
           }
@@ -182,7 +886,7 @@
     "callerPolicy": "workflowsFromSameOwner"
   },
   "staticData": null,
-  "tags": [],
-  "triggerCount": 1,
+  "tags": ["worker", "document", "rag"],
+  "triggerCount": 0,
   "pinData": {}
 }

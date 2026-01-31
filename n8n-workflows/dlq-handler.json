@@ -21,15 +21,15 @@
     {
       "parameters": {
         "method": "GET",
-        "url": "https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/dead_letter_queue?status=eq.pending&next_retry_at=lte.now()&limit=10&order=created_at.asc",
+        "url": "https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/dead_letter_queue?status=eq.pending&limit=10&order=created_at.asc",
         "authentication": "predefinedCredentialType",
-        "nodeCredentialType": "httpHeaderAuth",
+        "nodeCredentialType": "multipleHttpHeadersAuth",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
             {
-              "name": "apikey",
-              "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxreWl4YWlwcGRtdGp5aXp0dXp3Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2OTcwMjY4OSwiZXhwIjoyMDg1Mjc4Njg5fQ.nD4GhFIFXs-1qvdc42vAO1uumgTfGgiABsB9OgrOJHo"
+              "name": "Content-Type",
+              "value": "application/json"
             }
           ]
         },
@@ -41,9 +41,9 @@
       "typeVersion": 4.2,
       "position": [470, 300],
       "credentials": {
-        "httpHeaderAuth": {
-          "id": "supabase-credential",
-          "name": "Supabase Service Key"
+        "multipleHttpHeadersAuth": {
+          "id": "supabase-both-keys",
+          "name": "Supabase Both Keys"
         }
       }
     },
@@ -53,12 +53,12 @@
           "options": {
             "caseSensitive": true,
             "leftValue": "",
-            "typeValidation": "strict"
+            "typeValidation": "loose"
           },
           "conditions": [
             {
               "id": "condition-has-items",
-              "leftValue": "={{ Array.isArray($json) ? $json.length : (Array.isArray($input.all()) ? $input.all().length : 0) }}",
+              "leftValue": "={{ $json.length || $input.all().length }}",
               "rightValue": 0,
               "operator": {
                 "type": "number",
@@ -78,30 +78,55 @@
     },
     {
       "parameters": {
-        "jsCode": "// Split items and add retry metadata\nconst items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const data = item.json;\n  // Handle both array response and single item\n  const dlqItems = Array.isArray(data) ? data : [data];\n  \n  for (const dlqItem of dlqItems) {\n    if (dlqItem && dlqItem.id) {\n      results.push({\n        json: {\n          ...dlqItem,\n          retry_attempt: (dlqItem.retry_count || 0) + 1,\n          exponential_delay: Math.pow(2, (dlqItem.retry_count || 0) + 1) * 1000\n        }\n      });\n    }\n  }\n}\n\nreturn results;"
+        "jsCode": "// Split DLQ items into individual items for processing\nconst input = $input.first().json;\nconst dlqItems = Array.isArray(input) ? input : [input];\nconst results = [];\n\nfor (const dlqItem of dlqItems) {\n  if (dlqItem && dlqItem.id) {\n    const retryCount = (dlqItem.retry_count || 0) + 1;\n    const maxRetries = dlqItem.max_retries || 5;\n    \n    results.push({\n      json: {\n        dlq_id: dlqItem.id,\n        resource_type: dlqItem.resource_type,\n        payload: dlqItem.payload,\n        error_message: dlqItem.error_message,\n        retry_count: retryCount,\n        max_retries: maxRetries,\n        should_abandon: retryCount > maxRetries\n      }\n    });\n  }\n}\n\nreturn results;"
       },
       "id": "split-items",
       "name": "Split Items",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [910, 200]
+      "position": [910, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "should-abandon",
+              "leftValue": "={{ $json.should_abandon }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-max-retries",
+      "name": "Max Retries Exceeded?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1130, 300]
     },
     {
       "parameters": {
         "method": "PATCH",
-        "url": "=https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/dead_letter_queue?id=eq.{{ $json.id }}",
+        "url": "=https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/dead_letter_queue?id=eq.{{ $json.dlq_id }}",
         "authentication": "predefinedCredentialType",
-        "nodeCredentialType": "httpHeaderAuth",
+        "nodeCredentialType": "multipleHttpHeadersAuth",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
             {
               "name": "Content-Type",
               "value": "application/json"
-            },
-            {
-              "name": "apikey",
-              "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxreWl4YWlwcGRtdGp5aXp0dXp3Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2OTcwMjY4OSwiZXhwIjoyMDg1Mjc4Njg5fQ.nD4GhFIFXs-1qvdc42vAO1uumgTfGgiABsB9OgrOJHo"
             },
             {
               "name": "Prefer",
@@ -111,37 +136,84 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ status: 'processing', last_retry_at: new Date().toISOString(), retry_count: $json.retry_attempt }) }}",
+        "jsonBody": "={{ JSON.stringify({ status: 'processing', last_retry_at: new Date().toISOString(), retry_count: $json.retry_count }) }}",
         "options": {}
       },
       "id": "mark-processing",
       "name": "Mark Processing",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1130, 200],
+      "position": [1350, 400],
       "credentials": {
-        "httpHeaderAuth": {
-          "id": "supabase-credential",
-          "name": "Supabase Service Key"
+        "multipleHttpHeadersAuth": {
+          "id": "supabase-both-keys",
+          "name": "Supabase Both Keys"
         }
       }
     },
     {
       "parameters": {
-        "jsCode": "// Process retry logic\nconst items = $input.all();\nconst prevItems = $('Split Items').all();\nconst results = [];\n\nfor (let i = 0; i < items.length; i++) {\n  const dlqItem = prevItems[i].json;\n  const maxRetries = dlqItem.max_retries || 5;\n  const currentRetry = dlqItem.retry_attempt || 1;\n  \n  // Simulate retry result (in production, this would call the actual processing endpoint)\n  // For demo: 70% success rate\n  const success = Math.random() > 0.3;\n  \n  let status, nextRetryAt;\n  \n  if (success) {\n    status = 'completed';\n    nextRetryAt = null;\n  } else if (currentRetry >= maxRetries) {\n    status = 'abandoned';\n    nextRetryAt = null;\n  } else {\n    status = 'pending';\n    // Exponential backoff: 2^retry minutes\n    const delayMinutes = Math.pow(2, currentRetry);\n    nextRetryAt = new Date(Date.now() + delayMinutes * 60 * 1000).toISOString();\n  }\n  \n  results.push({\n    json: {\n      dlq_id: dlqItem.id,\n      status,\n      next_retry_at: nextRetryAt,\n      success,\n      retry_count: currentRetry,\n      resource_type: dlqItem.resource_type\n    }\n  });\n}\n\nreturn results;"
+        "jsCode": "// Prepare payload to send to orchestrator\nconst dlqItem = $('Split Items').item.json;\n\n// Map resource_type to task_type\nconst taskTypeMap = {\n  'document': 'document',\n  'audio': 'audio',\n  'text': 'text'\n};\n\nconst taskType = taskTypeMap[dlqItem.resource_type] || 'document';\n\nreturn {\n  json: {\n    dlq_id: dlqItem.dlq_id,\n    task_type: taskType,\n    payload: dlqItem.payload,\n    retry_count: dlqItem.retry_count,\n    is_retry: true\n  }\n};"
       },
-      "id": "process-retry",
-      "name": "Process Retry",
+      "id": "prepare-retry-payload",
+      "name": "Prepare Retry Payload",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1350, 200]
+      "position": [1570, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://exopoditic-emersyn-unblushing.ngrok-free.dev/webhook/orchestrate",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ task_type: $json.task_type, payload: $json.payload, is_retry: true, dlq_id: $json.dlq_id }) }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "call-orchestrator",
+      "name": "Call Orchestrator",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1790, 400],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Handle successful retry\nconst dlqItem = $('Prepare Retry Payload').item.json;\nconst response = $input.first().json;\n\nreturn {\n  json: {\n    dlq_id: dlqItem.dlq_id,\n    status: 'completed',\n    success: true,\n    response: response\n  }\n};"
+      },
+      "id": "handle-success",
+      "name": "Handle Success",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2010, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Handle failed retry\nconst dlqItem = $('Prepare Retry Payload').item.json;\nconst errorData = $input.first().json;\n\n// Calculate next retry time with exponential backoff\nconst delayMinutes = Math.pow(2, dlqItem.retry_count);\nconst nextRetryAt = new Date(Date.now() + delayMinutes * 60 * 1000).toISOString();\n\nreturn {\n  json: {\n    dlq_id: dlqItem.dlq_id,\n    status: 'pending',\n    success: false,\n    next_retry_at: nextRetryAt,\n    error: errorData.error?.message || errorData.message || 'Retry failed'\n  }\n};"
+      },
+      "id": "handle-failure",
+      "name": "Handle Failure",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2010, 500]
     },
     {
       "parameters": {
         "method": "PATCH",
         "url": "=https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/dead_letter_queue?id=eq.{{ $json.dlq_id }}",
         "authentication": "predefinedCredentialType",
-        "nodeCredentialType": "httpHeaderAuth",
+        "nodeCredentialType": "multipleHttpHeadersAuth",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -150,8 +222,40 @@
               "value": "application/json"
             },
             {
-              "name": "apikey",
-              "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxreWl4YWlwcGRtdGp5aXp0dXp3Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2OTcwMjY4OSwiZXhwIjoyMDg1Mjc4Njg5fQ.nD4GhFIFXs-1qvdc42vAO1uumgTfGgiABsB9OgrOJHo"
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ status: $json.status, next_retry_at: $json.next_retry_at || null }) }}",
+        "options": {}
+      },
+      "id": "update-dlq-success",
+      "name": "Update DLQ (Success)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2230, 300],
+      "credentials": {
+        "multipleHttpHeadersAuth": {
+          "id": "supabase-both-keys",
+          "name": "Supabase Both Keys"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/dead_letter_queue?id=eq.{{ $json.dlq_id }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "multipleHttpHeadersAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
             },
             {
               "name": "Prefer",
@@ -164,53 +268,24 @@
         "jsonBody": "={{ JSON.stringify({ status: $json.status, next_retry_at: $json.next_retry_at }) }}",
         "options": {}
       },
-      "id": "update-dlq-status",
-      "name": "Update DLQ Status",
+      "id": "update-dlq-failure",
+      "name": "Update DLQ (Pending)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1570, 200],
+      "position": [2230, 500],
       "credentials": {
-        "httpHeaderAuth": {
-          "id": "supabase-credential",
-          "name": "Supabase Service Key"
+        "multipleHttpHeadersAuth": {
+          "id": "supabase-both-keys",
+          "name": "Supabase Both Keys"
         }
       }
     },
     {
       "parameters": {
-        "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "strict"
-          },
-          "conditions": [
-            {
-              "id": "condition-abandoned",
-              "leftValue": "={{ $('Process Retry').first().json.status }}",
-              "rightValue": "abandoned",
-              "operator": {
-                "type": "string",
-                "operation": "equals"
-              }
-            }
-          ],
-          "combinator": "and"
-        },
-        "options": {}
-      },
-      "id": "is-abandoned",
-      "name": "Is Abandoned",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2,
-      "position": [1790, 200]
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/error_notifications",
+        "method": "PATCH",
+        "url": "=https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/dead_letter_queue?id=eq.{{ $json.dlq_id }}",
         "authentication": "predefinedCredentialType",
-        "nodeCredentialType": "httpHeaderAuth",
+        "nodeCredentialType": "multipleHttpHeadersAuth",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -219,31 +294,49 @@
               "value": "application/json"
             },
             {
-              "name": "apikey",
-              "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxreWl4YWlwcGRtdGp5aXp0dXp3Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2OTcwMjY4OSwiZXhwIjoyMDg1Mjc4Njg5fQ.nD4GhFIFXs-1qvdc42vAO1uumgTfGgiABsB9OgrOJHo"
-            },
-            {
               "name": "Prefer",
-              "value": "return=representation"
+              "value": "return=minimal"
             }
           ]
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ resource_type: $('Process Retry').first().json.resource_type, severity: 'CRITICAL', message: 'DLQ item abandoned after max retries', details: { dlq_id: $('Process Retry').first().json.dlq_id, retry_count: $('Process Retry').first().json.retry_count }, notification_channels: ['database', 'email'] }) }}",
+        "jsonBody": "={{ JSON.stringify({ status: 'abandoned' }) }}",
         "options": {}
       },
-      "id": "notify-abandoned",
-      "name": "Notify Abandoned",
+      "id": "mark-abandoned",
+      "name": "Mark Abandoned",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [2010, 100],
+      "position": [1350, 200],
       "credentials": {
-        "httpHeaderAuth": {
-          "id": "supabase-credential",
-          "name": "Supabase Service Key"
+        "multipleHttpHeadersAuth": {
+          "id": "supabase-both-keys",
+          "name": "Supabase Both Keys"
         }
       }
+    },
+    {
+      "parameters": {
+        "fromEmail": "gustavoferraz405@gmail.com",
+        "toEmail": "gustavoferraz405@gmail.com",
+        "subject": "=🚨 DLQ Item Abandoned - {{ $('Split Items').item.json.resource_type }}",
+        "emailType": "html",
+        "html": "=<h2>🚨 DLQ Item Abandoned After Max Retries</h2><table style=\"border-collapse: collapse; width: 100%; max-width: 600px;\"><tr><td style=\"padding: 8px; border: 1px solid #ddd;\"><strong>DLQ ID</strong></td><td style=\"padding: 8px; border: 1px solid #ddd;\">{{ $('Split Items').item.json.dlq_id }}</td></tr><tr><td style=\"padding: 8px; border: 1px solid #ddd;\"><strong>Resource Type</strong></td><td style=\"padding: 8px; border: 1px solid #ddd;\">{{ $('Split Items').item.json.resource_type }}</td></tr><tr><td style=\"padding: 8px; border: 1px solid #ddd;\"><strong>Retry Count</strong></td><td style=\"padding: 8px; border: 1px solid #ddd;\">{{ $('Split Items').item.json.retry_count }}</td></tr><tr><td style=\"padding: 8px; border: 1px solid #ddd;\"><strong>Last Error</strong></td><td style=\"padding: 8px; border: 1px solid #ddd; color: red;\">{{ $('Split Items').item.json.error_message }}</td></tr><tr><td style=\"padding: 8px; border: 1px solid #ddd;\"><strong>Time</strong></td><td style=\"padding: 8px; border: 1px solid #ddd;\">{{ new Date().toISOString() }}</td></tr></table><p style=\"margin-top: 20px; color: #666;\">This item requires manual intervention.</p>",
+        "options": {}
+      },
+      "id": "send-abandoned-email",
+      "name": "Send Abandoned Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [1570, 200],
+      "credentials": {
+        "smtp": {
+          "id": "smtp-credential",
+          "name": "SMTP"
+        }
+      },
+      "continueOnFail": true
     },
     {
       "parameters": {},
@@ -251,15 +344,7 @@
       "name": "No Items",
       "type": "n8n-nodes-base.noOp",
       "typeVersion": 1,
-      "position": [910, 400]
-    },
-    {
-      "parameters": {},
-      "id": "retry-scheduled",
-      "name": "Retry Scheduled",
-      "type": "n8n-nodes-base.noOp",
-      "typeVersion": 1,
-      "position": [2010, 300]
+      "position": [910, 500]
     }
   ],
   "connections": {
@@ -307,7 +392,36 @@
       "main": [
         [
           {
+            "node": "Max Retries Exceeded?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Max Retries Exceeded?": {
+      "main": [
+        [
+          {
+            "node": "Mark Abandoned",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
             "node": "Mark Processing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Abandoned": {
+      "main": [
+        [
+          {
+            "node": "Send Abandoned Email",
             "type": "main",
             "index": 0
           }
@@ -318,47 +432,58 @@
       "main": [
         [
           {
-            "node": "Process Retry",
+            "node": "Prepare Retry Payload",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Process Retry": {
+    "Prepare Retry Payload": {
       "main": [
         [
           {
-            "node": "Update DLQ Status",
+            "node": "Call Orchestrator",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Update DLQ Status": {
+    "Call Orchestrator": {
       "main": [
         [
           {
-            "node": "Is Abandoned",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Is Abandoned": {
-      "main": [
-        [
-          {
-            "node": "Notify Abandoned",
+            "node": "Handle Success",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "Retry Scheduled",
+            "node": "Handle Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Handle Success": {
+      "main": [
+        [
+          {
+            "node": "Update DLQ (Success)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Handle Failure": {
+      "main": [
+        [
+          {
+            "node": "Update DLQ (Pending)",
             "type": "main",
             "index": 0
           }
@@ -372,7 +497,7 @@
     "callerPolicy": "workflowsFromSameOwner"
   },
   "staticData": null,
-  "tags": [],
+  "tags": ["dlq", "error-handling"],
   "triggerCount": 1,
   "pinData": {}
 }

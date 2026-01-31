@@ -1,0 +1,188 @@
+{
+  "name": "Batch Processor",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "batch-process",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "batch-webhook",
+      "name": "Batch Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [250, 300],
+      "webhookId": "batch-processor"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Validate and prepare batch items\nconst input = $input.first().json;\nconst body = input.body || input;\n\n// Expect an array of items to process\nlet items = body.items || body;\nif (!Array.isArray(items)) {\n  items = [items];\n}\n\n// Validate batch size\nif (items.length > 100) {\n  throw new Error('Batch size exceeds maximum of 100 items');\n}\n\nif (items.length === 0) {\n  throw new Error('No items provided in batch');\n}\n\n// Generate batch ID for tracking\nconst batchId = `batch_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;\n\nreturn {\n  json: {\n    batch_id: batchId,\n    total_items: items.length,\n    items: items.map((item, index) => ({\n      item_index: index,\n      task_type: item.task_type || (item.mime_type?.startsWith('audio/') ? 'audio' : item.mime_type?.startsWith('text/') ? 'text' : 'document'),\n      payload: item.payload || item,\n      priority: item.priority || 2\n    }))\n  }\n};"
+      },
+      "id": "validate-batch",
+      "name": "Validate & Prepare Batch",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [470, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/batch_jobs",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "multipleHttpHeadersAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ batch_id: $json.batch_id, total_items: $json.total_items, status: 'processing', created_at: new Date().toISOString() }) }}",
+        "options": {}
+      },
+      "id": "create-batch-record",
+      "name": "Create Batch Record",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [690, 300],
+      "credentials": {
+        "multipleHttpHeadersAuth": {
+          "id": "supabase-both-keys",
+          "name": "Supabase Both Keys"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Process all items by calling the orchestrator for each\nconst batchData = $('Validate & Prepare Batch').first().json;\nconst batchId = batchData.batch_id;\nconst items = batchData.items;\n\nconst results = [];\nlet queuedCount = 0;\nlet failedCount = 0;\n\nfor (const item of items) {\n  try {\n    // Make HTTP request to orchestrator\n    const response = await this.helpers.httpRequest({\n      method: 'POST',\n      url: 'https://exopoditic-emersyn-unblushing.ngrok-free.dev/webhook/orchestrate',\n      body: {\n        task_type: item.task_type,\n        payload: item.payload,\n        priority: item.priority,\n        batch_id: batchId,\n        item_index: item.item_index\n      },\n      json: true,\n      timeout: 30000\n    });\n    \n    results.push({\n      item_index: item.item_index,\n      task_id: response.task_id,\n      status: 'queued',\n      workflow: response.workflow\n    });\n    queuedCount++;\n  } catch (error) {\n    results.push({\n      item_index: item.item_index,\n      task_id: null,\n      status: 'failed',\n      error: error.message\n    });\n    failedCount++;\n  }\n}\n\nconst finalStatus = failedCount === 0 ? 'completed' : failedCount === items.length ? 'failed' : 'partial';\n\nreturn {\n  json: {\n    batch_id: batchId,\n    total_items: items.length,\n    queued: queuedCount,\n    failed: failedCount,\n    status: finalStatus,\n    completed_at: new Date().toISOString(),\n    items: results\n  }\n};"
+      },
+      "id": "process-all-items",
+      "name": "Process All Items",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [910, 300]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/batch_jobs?batch_id=eq.{{ $json.batch_id }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "multipleHttpHeadersAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ status: $json.status, queued_count: $json.queued, failed_count: $json.failed, completed_at: $json.completed_at }) }}",
+        "options": {}
+      },
+      "id": "update-batch-record",
+      "name": "Update Batch Record",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1130, 300],
+      "credentials": {
+        "multipleHttpHeadersAuth": {
+          "id": "supabase-both-keys",
+          "name": "Supabase Both Keys"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: true, batch_id: $('Process All Items').first().json.batch_id, total_items: $('Process All Items').first().json.total_items, queued: $('Process All Items').first().json.queued, failed: $('Process All Items').first().json.failed, status: $('Process All Items').first().json.status, message: 'Batch processing completed. Items have been queued.', items: $('Process All Items').first().json.items }) }}"
+      },
+      "id": "batch-response",
+      "name": "Batch Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1350, 300]
+    }
+  ],
+  "connections": {
+    "Batch Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate & Prepare Batch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate & Prepare Batch": {
+      "main": [
+        [
+          {
+            "node": "Create Batch Record",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Batch Record": {
+      "main": [
+        [
+          {
+            "node": "Process All Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process All Items": {
+      "main": [
+        [
+          {
+            "node": "Update Batch Record",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Batch Record": {
+      "main": [
+        [
+          {
+            "node": "Batch Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "staticData": null,
+  "tags": ["batch", "orchestrator"],
+  "triggerCount": 1,
+  "pinData": {}
+}
