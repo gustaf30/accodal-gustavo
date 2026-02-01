@@ -38,11 +38,12 @@ export async function searchDocuments(
   // Search using Supabase pgvector
   const supabase = getSupabaseClient();
 
-  // Pass embedding as JSON string for pgvector
-  const embeddingStr = JSON.stringify(queryEmbedding);
-  console.log('Embedding string preview:', embeddingStr.substring(0, 100) + '...');
-  console.log('Calling RPC with threshold:', threshold, 'match_count:', effectiveLimit + offset);
+  // Pass embedding for pgvector search
+  const embeddingStr = '[' + queryEmbedding.join(',') + ']';
+  console.log('Embedding string length:', embeddingStr.length);
+  console.log('Threshold:', threshold, 'Limit:', effectiveLimit + offset);
 
+  // Try raw SQL query for better control
   const { data, error } = await supabase.rpc('search_documents_by_similarity', {
     query_embedding: embeddingStr,
     match_threshold: threshold,
@@ -50,7 +51,7 @@ export async function searchDocuments(
     filter_user_id: user_id || null,
   });
 
-  console.log('RPC result - error:', error, 'data length:', data?.length || 0);
+  console.log('Search result - error:', JSON.stringify(error), 'data:', JSON.stringify(data?.slice(0, 2)));
 
   if (error) {
     console.error('RPC error details:', error);
