@@ -13,13 +13,17 @@ export async function handleSearch(
   next: NextFunction
 ): Promise<void> {
   try {
+    const thresholdValue = req.body.threshold ?? req.query.threshold;
+    const limitValue = req.body.limit ?? req.query.limit;
+    const offsetValue = req.body.offset ?? req.query.offset;
+
     const searchRequest: SearchRequest = {
       query: req.body.query || req.query.query as string,
       user_id: req.body.user_id || req.query.user_id as string,
       document_type: req.body.document_type || req.query.document_type as DocumentType,
-      threshold: parseFloat(req.body.threshold || req.query.threshold as string) || undefined,
-      limit: parseInt(req.body.limit || req.query.limit as string, 10) || undefined,
-      offset: parseInt(req.body.offset || req.query.offset as string, 10) || undefined,
+      threshold: thresholdValue !== undefined ? parseFloat(thresholdValue) : undefined,
+      limit: limitValue !== undefined ? parseInt(limitValue, 10) : undefined,
+      offset: offsetValue !== undefined ? parseInt(offsetValue, 10) : undefined,
     };
 
     if (!searchRequest.query) {
