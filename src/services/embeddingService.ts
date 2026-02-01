@@ -11,25 +11,42 @@ let openaiClient: OpenAI | null = null;
 function getOpenAIClient(): OpenAI {
   if (!openaiClient) {
     const config = getConfig();
+    const apiKey = config.openaiApiKey;
+    console.log('OpenAI API Key loaded:', apiKey ? `${apiKey.substring(0, 10)}...` : 'NOT FOUND');
+
     openaiClient = new OpenAI({
-      apiKey: config.openaiApiKey,
-      timeout: 30000,
+      apiKey: apiKey,
+      timeout: 60000,
       maxRetries: 3,
+      fetch: globalThis.fetch,
     });
   }
   return openaiClient;
 }
 
 export async function generateEmbedding(text: string): Promise<number[]> {
-  const openai = getOpenAIClient();
+  try {
+    console.log('Generating embedding for text length:', text.length);
+    const openai = getOpenAIClient();
+    console.log('OpenAI client created, calling embeddings API...');
 
-  const response = await openai.embeddings.create({
-    model: EMBEDDING_MODEL,
-    input: text,
-    dimensions: EMBEDDING_DIMENSIONS,
-  });
+    const response = await openai.embeddings.create({
+      model: EMBEDDING_MODEL,
+      input: text,
+      dimensions: EMBEDDING_DIMENSIONS,
+    });
 
-  return response.data[0].embedding;
+    console.log('Embedding generated successfully');
+    return response.data[0].embedding;
+  } catch (error: any) {
+    console.error('OpenAI embedding error:', {
+      message: error.message,
+      status: error.status,
+      code: error.code,
+      type: error.type,
+    });
+    throw error;
+  }
 }
 
 export async function generateEmbeddings(texts: string[]): Promise<number[][]> {
