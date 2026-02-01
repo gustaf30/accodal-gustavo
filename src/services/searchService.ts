@@ -158,7 +158,7 @@ export async function searchDocuments(
       embedding_length: queryEmbedding.length,
       embedding_first_5: queryEmbedding.slice(0, 5),
       supabase_url: supabaseUrl ? supabaseUrl.substring(0, 30) + '...' : 'NOT SET',
-      supabase_key_preview: supabaseKey ? supabaseKey.substring(0, 20) + '...' : 'NOT SET',
+      supabase_key_preview: supabaseKey ? `len:${supabaseKey.length} end:${supabaseKey.slice(-10)}` : 'NOT SET',
       existing_embeddings_count: Array.isArray(existingEmbeddings) ? existingEmbeddings.length : 0,
       existing_embeddings: existingEmbeddings,
       existing_docs_count: Array.isArray(existingDocs) ? existingDocs.length : 0,
