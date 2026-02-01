@@ -13,6 +13,8 @@ function getOpenAIClient(): OpenAI {
     const config = getConfig();
     openaiClient = new OpenAI({
       apiKey: config.openaiApiKey,
+      timeout: 30000,
+      maxRetries: 3,
     });
   }
   return openaiClient;
