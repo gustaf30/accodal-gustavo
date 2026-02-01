@@ -78,17 +78,16 @@ export async function searchDocuments(
     }),
   });
 
-  const data = await response.json();
-  const error = response.ok ? null : data;
+  const responseData = await response.json();
 
-  console.log('Search result - status:', response.status, 'data length:', Array.isArray(data) ? data.length : 'not array');
+  console.log('Search result - status:', response.status, 'data length:', Array.isArray(responseData) ? responseData.length : 'not array');
 
-  if (error) {
-    console.error('RPC error details:', error);
-    throw new Error(`Search failed: ${error.message}`);
+  if (!response.ok) {
+    console.error('RPC error details:', responseData);
+    throw new Error(`Search failed: ${(responseData as any).message || 'Unknown error'}`);
   }
 
-  let results: SearchResult[] = data || [];
+  let results: SearchResult[] = (responseData as SearchResult[]) || [];
 
   // Apply offset
   if (offset > 0) {
