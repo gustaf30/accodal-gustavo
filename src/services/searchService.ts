@@ -57,6 +57,17 @@ export async function searchDocuments(
   const existingEmbeddings = await checkEmbeddingsResponse.json();
   console.log('Existing embeddings:', JSON.stringify(existingEmbeddings));
 
+  // Check documents table too (to verify if it's RLS issue)
+  const checkDocsResponse = await fetch(`${supabaseUrl}/rest/v1/documents?select=id,filename&limit=5`, {
+    headers: {
+      'Content-Type': 'application/json',
+      'apikey': supabaseKey!,
+      'Authorization': `Bearer ${supabaseKey}`,
+    },
+  });
+  const existingDocs = await checkDocsResponse.json();
+  console.log('Existing docs:', JSON.stringify(existingDocs));
+
   // First, debug the similarity scores
   const debugResponse = await fetch(`${supabaseUrl}/rest/v1/rpc/debug_similarity`, {
     method: 'POST',
@@ -147,8 +158,11 @@ export async function searchDocuments(
       embedding_length: queryEmbedding.length,
       embedding_first_5: queryEmbedding.slice(0, 5),
       supabase_url: supabaseUrl ? supabaseUrl.substring(0, 30) + '...' : 'NOT SET',
+      supabase_key_preview: supabaseKey ? supabaseKey.substring(0, 20) + '...' : 'NOT SET',
       existing_embeddings_count: Array.isArray(existingEmbeddings) ? existingEmbeddings.length : 0,
       existing_embeddings: existingEmbeddings,
+      existing_docs_count: Array.isArray(existingDocs) ? existingDocs.length : 0,
+      existing_docs: existingDocs,
       debug_response_status: debugResponse.status,
       debug_similarities: debugData,
       search_response_status: response.status,
