@@ -21,7 +21,7 @@
     {
       "parameters": {
         "method": "GET",
-        "url": "https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/dead_letter_queue?status=eq.pending&limit=10&order=created_at.asc",
+        "url": "={{$env.SUPABASE_URL}}/rest/v1/dead_letter_queue?status=eq.pending&limit=10&order=created_at.asc",
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "multipleHttpHeadersAuth",
         "sendHeaders": true,
@@ -118,7 +118,7 @@
     {
       "parameters": {
         "method": "PATCH",
-        "url": "=https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/dead_letter_queue?id=eq.{{ $json.dlq_id }}",
+        "url": "={{$env.SUPABASE_URL}}/rest/v1/dead_letter_queue?id=eq.{{ $json.dlq_id }}",
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "multipleHttpHeadersAuth",
         "sendHeaders": true,
@@ -164,7 +164,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "https://exopoditic-emersyn-unblushing.ngrok-free.dev/webhook/orchestrate",
+        "url": "={{$env.N8N_WEBHOOK_URL}}/webhook/orchestrate",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -211,7 +211,7 @@
     {
       "parameters": {
         "method": "PATCH",
-        "url": "=https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/dead_letter_queue?id=eq.{{ $json.dlq_id }}",
+        "url": "={{$env.SUPABASE_URL}}/rest/v1/dead_letter_queue?id=eq.{{ $json.dlq_id }}",
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "multipleHttpHeadersAuth",
         "sendHeaders": true,
@@ -247,7 +247,7 @@
     {
       "parameters": {
         "method": "PATCH",
-        "url": "=https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/dead_letter_queue?id=eq.{{ $json.dlq_id }}",
+        "url": "={{$env.SUPABASE_URL}}/rest/v1/dead_letter_queue?id=eq.{{ $json.dlq_id }}",
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "multipleHttpHeadersAuth",
         "sendHeaders": true,
@@ -283,7 +283,7 @@
     {
       "parameters": {
         "method": "PATCH",
-        "url": "=https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/dead_letter_queue?id=eq.{{ $json.dlq_id }}",
+        "url": "={{$env.SUPABASE_URL}}/rest/v1/dead_letter_queue?id=eq.{{ $json.dlq_id }}",
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "multipleHttpHeadersAuth",
         "sendHeaders": true,
@@ -318,8 +318,8 @@
     },
     {
       "parameters": {
-        "fromEmail": "gustavoferraz405@gmail.com",
-        "toEmail": "gustavoferraz405@gmail.com",
+        "fromEmail": "={{$env.ALERT_EMAIL}}",
+        "toEmail": "={{$env.ALERT_EMAIL}}",
         "subject": "=🚨 DLQ Item Abandoned - {{ $('Split Items').item.json.resource_type }}",
         "emailType": "html",
         "html": "=<h2>🚨 DLQ Item Abandoned After Max Retries</h2><table style=\"border-collapse: collapse; width: 100%; max-width: 600px;\"><tr><td style=\"padding: 8px; border: 1px solid #ddd;\"><strong>DLQ ID</strong></td><td style=\"padding: 8px; border: 1px solid #ddd;\">{{ $('Split Items').item.json.dlq_id }}</td></tr><tr><td style=\"padding: 8px; border: 1px solid #ddd;\"><strong>Resource Type</strong></td><td style=\"padding: 8px; border: 1px solid #ddd;\">{{ $('Split Items').item.json.resource_type }}</td></tr><tr><td style=\"padding: 8px; border: 1px solid #ddd;\"><strong>Retry Count</strong></td><td style=\"padding: 8px; border: 1px solid #ddd;\">{{ $('Split Items').item.json.retry_count }}</td></tr><tr><td style=\"padding: 8px; border: 1px solid #ddd;\"><strong>Last Error</strong></td><td style=\"padding: 8px; border: 1px solid #ddd; color: red;\">{{ $('Split Items').item.json.error_message }}</td></tr><tr><td style=\"padding: 8px; border: 1px solid #ddd;\"><strong>Time</strong></td><td style=\"padding: 8px; border: 1px solid #ddd;\">{{ new Date().toISOString() }}</td></tr></table><p style=\"margin-top: 20px; color: #666;\">This item requires manual intervention.</p>",

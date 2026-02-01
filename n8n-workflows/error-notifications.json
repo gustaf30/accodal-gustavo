@@ -28,9 +28,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/error_notifications",
-        "authentication": "predefinedCredentialType",
-        "nodeCredentialType": "httpHeaderAuth",
+        "url": "={{$env.SUPABASE_URL}}/rest/v1/error_notifications",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -40,7 +38,11 @@
             },
             {
               "name": "apikey",
-              "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxreWl4YWlwcGRtdGp5aXp0dXp3Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2OTcwMjY4OSwiZXhwIjoyMDg1Mjc4Njg5fQ.nD4GhFIFXs-1qvdc42vAO1uumgTfGgiABsB9OgrOJHo"
+              "value": "={{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer {{$env.SUPABASE_SERVICE_ROLE_KEY}}"
             },
             {
               "name": "Prefer",
@@ -57,13 +59,7 @@
       "name": "Log to Database",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [690, 300],
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "supabase-credential",
-          "name": "Supabase Service Key"
-        }
-      }
+      "position": [690, 300]
     },
     {
       "parameters": {

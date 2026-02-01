@@ -21,7 +21,7 @@
     {
       "parameters": {
         "method": "GET",
-        "url": "=https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/worker_metrics?recorded_at=gte.{{ $now.minus({ hours: 24 }).toISO() }}&order=recorded_at.desc",
+        "url": "={{$env.SUPABASE_URL}}/rest/v1/worker_metrics?recorded_at=gte.{{ $now.minus({ hours: 24 }).toISO() }}&order=recorded_at.desc",
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "multipleHttpHeadersAuth",
         "options": {}
@@ -42,7 +42,7 @@
     {
       "parameters": {
         "method": "GET",
-        "url": "=https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/task_queue?select=status,workflow_name&created_at=gte.{{ $now.minus({ hours: 24 }).toISO() }}",
+        "url": "={{$env.SUPABASE_URL}}/rest/v1/task_queue?select=status,workflow_name&created_at=gte.{{ $now.minus({ hours: 24 }).toISO() }}",
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "multipleHttpHeadersAuth",
         "options": {}
@@ -63,7 +63,7 @@
     {
       "parameters": {
         "method": "GET",
-        "url": "=https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/dead_letter_queue?select=status,task_type,retry_count&created_at=gte.{{ $now.minus({ hours: 24 }).toISO() }}",
+        "url": "={{$env.SUPABASE_URL}}/rest/v1/dead_letter_queue?select=status,task_type,retry_count&created_at=gte.{{ $now.minus({ hours: 24 }).toISO() }}",
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "multipleHttpHeadersAuth",
         "options": {}
@@ -94,7 +94,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/worker_metrics",
+        "url": "={{$env.SUPABASE_URL}}/rest/v1/worker_metrics",
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "multipleHttpHeadersAuth",
         "sendHeaders": true,
@@ -155,8 +155,8 @@
     },
     {
       "parameters": {
-        "fromEmail": "gustavoferraz405@gmail.com",
-        "toEmail": "gustavoferraz405@gmail.com",
+        "fromEmail": "={{$env.ALERT_EMAIL}}",
+        "toEmail": "={{$env.ALERT_EMAIL}}",
         "subject": "=CRITICAL: System Health Alert - {{ $now.toISO() }}",
         "emailType": "html",
         "html": "=<h2 style=\"color: red;\">System Health Critical</h2><p><strong>Timestamp:</strong> {{ $('Calculate Metrics').first().json.timestamp }}</p><p><strong>Health Status:</strong> {{ $('Calculate Metrics').first().json.health_status }}</p><h3>Anomalies Detected:</h3><ul>{{ $('Calculate Metrics').first().json.anomalies.map(a => '<li>' + a.message + '</li>').join('') }}</ul><h3>Task Queue:</h3><ul><li>Total: {{ $('Calculate Metrics').first().json.task_queue.total }}</li><li>Pending: {{ $('Calculate Metrics').first().json.task_queue.pending }}</li><li>Failed: {{ $('Calculate Metrics').first().json.task_queue.failed }}</li><li>Success Rate: {{ $('Calculate Metrics').first().json.task_queue.success_rate }}%</li></ul><h3>Dead Letter Queue:</h3><ul><li>Total: {{ $('Calculate Metrics').first().json.dead_letter_queue.total }}</li><li>Abandoned: {{ $('Calculate Metrics').first().json.dead_letter_queue.abandoned }}</li></ul>",

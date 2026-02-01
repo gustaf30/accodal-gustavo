@@ -167,7 +167,7 @@ export interface BatchProcessingRequest {
     data: Record<string, unknown>;
   }>;
   user_id?: string;
-  priority?: number;
+  priority?: 'high' | 'normal' | 'low';
 }
 
 export interface BatchProcessingResponse {
@@ -175,6 +175,7 @@ export interface BatchProcessingResponse {
   total_items: number;
   status: 'queued' | 'processing' | 'completed' | 'failed';
   created_at: string;
+  queue_source?: 'redis' | 'supabase' | 'n8n';
 }
 
 export interface JobStatus {
@@ -185,7 +186,8 @@ export interface JobStatus {
   failed_items: number;
   results?: Array<{
     item_index: number;
-    status: 'completed' | 'failed';
+    status: 'completed' | 'failed' | 'queued';
+    task_id?: string;
     result_id?: string;
     error?: string;
   }>;
@@ -233,6 +235,8 @@ export interface AppConfig {
   openaiApiKey: string;
   redisUrl?: string;
   jwtSecret: string;
+  n8nWebhookUrl?: string;
+  validApiKeys: string[];
   rateLimitRequests: number;
   rateLimitWindow: number;
 }

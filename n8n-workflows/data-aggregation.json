@@ -18,7 +18,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/rpc/check_rate_limit_sliding",
+        "url": "={{$env.SUPABASE_URL}}/rest/v1/rpc/check_rate_limit_sliding",
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "multipleHttpHeadersAuth",
         "sendBody": true,
@@ -255,7 +255,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/worker_metrics",
+        "url": "={{$env.SUPABASE_URL}}/rest/v1/worker_metrics",
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "multipleHttpHeadersAuth",
         "sendBody": true,
@@ -290,7 +290,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/worker_metrics",
+        "url": "={{$env.SUPABASE_URL}}/rest/v1/worker_metrics",
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "multipleHttpHeadersAuth",
         "sendBody": true,
@@ -314,7 +314,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/dead_letter_queue",
+        "url": "={{$env.SUPABASE_URL}}/rest/v1/dead_letter_queue",
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "multipleHttpHeadersAuth",
         "sendBody": true,
@@ -337,8 +337,8 @@
     },
     {
       "parameters": {
-        "fromEmail": "gustavoferraz405@gmail.com",
-        "toEmail": "gustavoferraz405@gmail.com",
+        "fromEmail": "={{$env.ALERT_EMAIL}}",
+        "toEmail": "={{$env.ALERT_EMAIL}}",
         "subject": "=Data Aggregation Alert: Validation Failed - {{ $json.aggregation_id }}",
         "emailType": "html",
         "html": "=<h2>Data Aggregation Validation Failed</h2><p><strong>Aggregation ID:</strong> {{ $json.aggregation_id }}</p><p><strong>Consistency Score:</strong> {{ $json.cross_validation.average_consistency }}</p><p><strong>Sources Count:</strong> {{ $json.results.length }}</p><p><strong>Conflicts Count:</strong> {{ $json.conflicts.length }}</p><p><strong>Needs Manual Review:</strong> {{ $json.needs_manual_review }}</p><p>This task has been sent to the Dead Letter Queue for retry.</p>",

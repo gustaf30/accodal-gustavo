@@ -22,7 +22,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/rpc/check_rate_limit_sliding",
+        "url": "={{$env.SUPABASE_URL}}/rest/v1/rpc/check_rate_limit_sliding",
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "multipleHttpHeadersAuth",
         "sendHeaders": true,
@@ -93,7 +93,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/worker_metrics",
+        "url": "={{$env.SUPABASE_URL}}/rest/v1/worker_metrics",
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "multipleHttpHeadersAuth",
         "sendHeaders": true,
@@ -218,7 +218,7 @@
     },
     {
       "parameters": {
-        "fromEmail": "gustavoferraz405@gmail.com",
+        "fromEmail": "={{$env.ALERT_EMAIL}}",
         "toEmail": "={{ $json.recipient_email }}",
         "subject": "={{ $json.subject }}",
         "emailType": "html",
@@ -261,7 +261,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/processing_logs",
+        "url": "={{$env.SUPABASE_URL}}/rest/v1/processing_logs",
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "multipleHttpHeadersAuth",
         "sendHeaders": true,
@@ -307,7 +307,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/worker_metrics",
+        "url": "={{$env.SUPABASE_URL}}/rest/v1/worker_metrics",
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "multipleHttpHeadersAuth",
         "sendHeaders": true,
@@ -353,7 +353,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/worker_metrics",
+        "url": "={{$env.SUPABASE_URL}}/rest/v1/worker_metrics",
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "multipleHttpHeadersAuth",
         "sendHeaders": true,
@@ -389,7 +389,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/dead_letter_queue",
+        "url": "={{$env.SUPABASE_URL}}/rest/v1/dead_letter_queue",
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "multipleHttpHeadersAuth",
         "sendHeaders": true,
@@ -424,8 +424,8 @@
     },
     {
       "parameters": {
-        "fromEmail": "gustavoferraz405@gmail.com",
-        "toEmail": "gustavoferraz405@gmail.com",
+        "fromEmail": "={{$env.ALERT_EMAIL}}",
+        "toEmail": "={{$env.ALERT_EMAIL}}",
         "subject": "=Communication Failed - {{ $('Handle Error').first().json.task_id || 'unknown' }}",
         "emailType": "html",
         "html": "=<h2>Communication Processing Failed</h2><table style=\"border-collapse: collapse; width: 100%; max-width: 600px;\"><tr><td style=\"padding: 8px; border: 1px solid #ddd;\"><strong>Task ID</strong></td><td style=\"padding: 8px; border: 1px solid #ddd;\">{{ $('Handle Error').first().json.task_id || 'unknown' }}</td></tr><tr><td style=\"padding: 8px; border: 1px solid #ddd;\"><strong>Recipient</strong></td><td style=\"padding: 8px; border: 1px solid #ddd;\">{{ $('Handle Error').first().json.recipient_email || 'unknown' }}</td></tr><tr><td style=\"padding: 8px; border: 1px solid #ddd;\"><strong>Error</strong></td><td style=\"padding: 8px; border: 1px solid #ddd; color: red;\">{{ $('Handle Error').first().json.error || 'Unknown error' }}</td></tr><tr><td style=\"padding: 8px; border: 1px solid #ddd;\"><strong>Worker</strong></td><td style=\"padding: 8px; border: 1px solid #ddd;\">communication-worker</td></tr><tr><td style=\"padding: 8px; border: 1px solid #ddd;\"><strong>Time</strong></td><td style=\"padding: 8px; border: 1px solid #ddd;\">{{ new Date().toISOString() }}</td></tr></table><p style=\"margin-top: 20px; color: #666;\">This task has been added to the Dead Letter Queue for retry.</p>",

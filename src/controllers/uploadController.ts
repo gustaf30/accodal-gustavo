@@ -45,8 +45,11 @@ export async function handleProcessFromUrl(
 
     if (!filename || !file_url) {
       res.status(400).json({
-        success: false,
-        error: 'filename and file_url are required',
+        error: {
+          code: 'INVALID_REQUEST',
+          message: 'filename and file_url are required',
+          timestamp: new Date().toISOString(),
+        },
       });
       return;
     }
@@ -56,25 +59,37 @@ export async function handleProcessFromUrl(
       /\.(mp3|wav|m4a|ogg)$/i.test(filename);
     const taskType = isAudio ? 'audio' : 'document';
 
-    // Get n8n webhook URL from environment or use default
-    const n8nBaseUrl = process.env.N8N_WEBHOOK_URL ||
-      'https://exopoditic-emersyn-unblushing.ngrok-free.dev';
+    // Get n8n orchestrator URL from environment
+    const n8nBaseUrl = process.env.N8N_WEBHOOK_URL;
+    if (!n8nBaseUrl) {
+      res.status(500).json({
+        error: {
+          code: 'CONFIGURATION_ERROR',
+          message: 'N8N_WEBHOOK_URL environment variable not configured',
+          timestamp: new Date().toISOString(),
+        },
+      });
+      return;
+    }
 
-    // Call appropriate n8n workflow based on task type
-    const webhookPath = taskType === 'audio' ? '/webhook/process-audio' : '/webhook/process-document';
-    const n8nWebhookUrl = n8nBaseUrl + webhookPath;
+    // Use the master orchestrator endpoint (handles all task types)
+    const n8nWebhookUrl = `${n8nBaseUrl}/webhook/orchestrate`;
 
-    // Call n8n document/audio processing webhook
+    // Call n8n master orchestrator
     const n8nResponse = await fetch(n8nWebhookUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        filename,
-        file_url,
-        mime_type: mime_type || 'application/octet-stream',
-        user_id: userId,
+        task_type: taskType,
+        priority: 2,
+        payload: {
+          filename,
+          file_url,
+          mime_type: mime_type || 'application/octet-stream',
+          user_id: userId,
+        },
       }),
     });
 
@@ -119,8 +134,11 @@ export async function handleBase64Upload(
 
     if (!filename || !base64_content) {
       res.status(400).json({
-        success: false,
-        error: 'filename and base64_content are required',
+        error: {
+          code: 'INVALID_REQUEST',
+          message: 'filename and base64_content are required',
+          timestamp: new Date().toISOString(),
+        },
       });
       return;
     }
@@ -145,8 +163,11 @@ export async function handleBase64Upload(
 
     if (uploadError) {
       res.status(500).json({
-        success: false,
-        error: `Storage upload failed: ${uploadError.message}`,
+        error: {
+          code: 'STORAGE_ERROR',
+          message: `Storage upload failed: ${uploadError.message}`,
+          timestamp: new Date().toISOString(),
+        },
       });
       return;
     }
@@ -204,8 +225,11 @@ export async function handleFileUpload(
 
     if (!file) {
       res.status(400).json({
-        success: false,
-        error: 'No file provided',
+        error: {
+          code: 'INVALID_REQUEST',
+          message: 'No file provided',
+          timestamp: new Date().toISOString(),
+        },
       });
       return;
     }
@@ -227,8 +251,11 @@ export async function handleFileUpload(
 
     if (uploadError) {
       res.status(500).json({
-        success: false,
-        error: `Storage upload failed: ${uploadError.message}`,
+        error: {
+          code: 'STORAGE_ERROR',
+          message: `Storage upload failed: ${uploadError.message}`,
+          timestamp: new Date().toISOString(),
+        },
       });
       return;
     }
@@ -286,8 +313,11 @@ export async function handleMultipleFileUpload(
 
     if (!files || files.length === 0) {
       res.status(400).json({
-        success: false,
-        error: 'No files provided',
+        error: {
+          code: 'INVALID_REQUEST',
+          message: 'No files provided',
+          timestamp: new Date().toISOString(),
+        },
       });
       return;
     }
@@ -337,8 +367,11 @@ export async function handleMultipleFileUpload(
 
     if (uploadedItems.length === 0) {
       res.status(500).json({
-        success: false,
-        error: 'All file uploads failed',
+        error: {
+          code: 'STORAGE_ERROR',
+          message: 'All file uploads failed',
+          timestamp: new Date().toISOString(),
+        },
       });
       return;
     }

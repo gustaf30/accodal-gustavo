@@ -24,12 +24,21 @@ export function getSupabaseClient(): SupabaseClient {
 }
 
 export function getConfig(): AppConfig {
+  const jwtSecret = process.env.JWT_SECRET;
+
+  // JWT secret is required for authentication
+  if (!jwtSecret) {
+    throw new Error('Missing JWT_SECRET environment variable - required for authentication');
+  }
+
   const config: AppConfig = {
     supabaseUrl: process.env.SUPABASE_URL || '',
     supabaseServiceKey: process.env.SUPABASE_SERVICE_ROLE_KEY || '',
     openaiApiKey: process.env.OPENAI_API_KEY || '',
     redisUrl: process.env.REDIS_URL,
-    jwtSecret: process.env.JWT_SECRET || 'default-secret-change-in-production',
+    jwtSecret,
+    n8nWebhookUrl: process.env.N8N_WEBHOOK_URL,
+    validApiKeys: process.env.VALID_API_KEYS?.split(',').filter(k => k.trim()) || [],
     rateLimitRequests: parseInt(process.env.RATE_LIMIT_REQUESTS || '100', 10),
     rateLimitWindow: parseInt(process.env.RATE_LIMIT_WINDOW || '60000', 10),
   };

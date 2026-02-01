@@ -28,7 +28,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/batch_jobs",
+        "url": "={{$env.SUPABASE_URL}}/rest/v1/batch_jobs",
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "multipleHttpHeadersAuth",
         "sendHeaders": true,
@@ -63,7 +63,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Process all items by calling the orchestrator for each\nconst batchData = $('Validate & Prepare Batch').first().json;\nconst batchId = batchData.batch_id;\nconst items = batchData.items;\n\nconst results = [];\nlet queuedCount = 0;\nlet failedCount = 0;\n\nfor (const item of items) {\n  try {\n    // Make HTTP request to orchestrator\n    const response = await this.helpers.httpRequest({\n      method: 'POST',\n      url: 'https://exopoditic-emersyn-unblushing.ngrok-free.dev/webhook/orchestrate',\n      body: {\n        task_type: item.task_type,\n        payload: item.payload,\n        priority: item.priority,\n        batch_id: batchId,\n        item_index: item.item_index\n      },\n      json: true,\n      timeout: 30000\n    });\n    \n    results.push({\n      item_index: item.item_index,\n      task_id: response.task_id,\n      status: 'queued',\n      workflow: response.workflow\n    });\n    queuedCount++;\n  } catch (error) {\n    results.push({\n      item_index: item.item_index,\n      task_id: null,\n      status: 'failed',\n      error: error.message\n    });\n    failedCount++;\n  }\n}\n\nconst finalStatus = failedCount === 0 ? 'completed' : failedCount === items.length ? 'failed' : 'partial';\n\nreturn {\n  json: {\n    batch_id: batchId,\n    total_items: items.length,\n    queued: queuedCount,\n    failed: failedCount,\n    status: finalStatus,\n    completed_at: new Date().toISOString(),\n    items: results\n  }\n};"
+        "jsCode": "// Process all items by calling the orchestrator for each\nconst batchData = $('Validate & Prepare Batch').first().json;\nconst batchId = batchData.batch_id;\nconst items = batchData.items;\n\nconst results = [];\nlet queuedCount = 0;\nlet failedCount = 0;\n\nfor (const item of items) {\n  try {\n    // Make HTTP request to orchestrator\n    const response = await this.helpers.httpRequest({\n      method: 'POST',\n      url: '{{$env.N8N_WEBHOOK_URL}}/webhook/orchestrate',\n      body: {\n        task_type: item.task_type,\n        payload: item.payload,\n        priority: item.priority,\n        batch_id: batchId,\n        item_index: item.item_index\n      },\n      json: true,\n      timeout: 30000\n    });\n    \n    results.push({\n      item_index: item.item_index,\n      task_id: response.task_id,\n      status: 'queued',\n      workflow: response.workflow\n    });\n    queuedCount++;\n  } catch (error) {\n    results.push({\n      item_index: item.item_index,\n      task_id: null,\n      status: 'failed',\n      error: error.message\n    });\n    failedCount++;\n  }\n}\n\nconst finalStatus = failedCount === 0 ? 'completed' : failedCount === items.length ? 'failed' : 'partial';\n\nreturn {\n  json: {\n    batch_id: batchId,\n    total_items: items.length,\n    queued: queuedCount,\n    failed: failedCount,\n    status: finalStatus,\n    completed_at: new Date().toISOString(),\n    items: results\n  }\n};"
       },
       "id": "process-all-items",
       "name": "Process All Items",
@@ -74,7 +74,7 @@
     {
       "parameters": {
         "method": "PATCH",
-        "url": "=https://lkyixaippdmtjyiztuzw.supabase.co/rest/v1/batch_jobs?batch_id=eq.{{ $json.batch_id }}",
+        "url": "={{$env.SUPABASE_URL}}/rest/v1/batch_jobs?batch_id=eq.{{ $json.batch_id }}",
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "multipleHttpHeadersAuth",
         "sendHeaders": true,
