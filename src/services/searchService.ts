@@ -33,15 +33,14 @@ export async function searchDocuments(
 
   // Generate embedding for query
   const queryEmbedding = await generateEmbedding(query);
-
-  // Convert embedding array to string format for pgvector
-  const embeddingString = '[' + queryEmbedding.join(',') + ']';
+  console.log('Query embedding generated, length:', queryEmbedding.length);
 
   // Search using Supabase pgvector
   const supabase = getSupabaseClient();
 
+  // Pass embedding as JSON string for pgvector
   const { data, error } = await supabase.rpc('search_documents_by_similarity', {
-    query_embedding: embeddingString,
+    query_embedding: JSON.stringify(queryEmbedding),
     match_threshold: threshold,
     match_count: effectiveLimit + offset,
     filter_user_id: user_id || null,
