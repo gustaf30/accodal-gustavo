@@ -8,7 +8,7 @@ import {
   DocumentType,
 } from '../types';
 
-const DEFAULT_THRESHOLD = 0.7;
+const DEFAULT_THRESHOLD = 0.3;
 const DEFAULT_LIMIT = 10;
 const MAX_LIMIT = 100;
 
