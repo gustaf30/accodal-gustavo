@@ -38,20 +38,32 @@ export async function searchDocuments(
   // Search using Supabase pgvector
   const supabase = getSupabaseClient();
 
-  // Pass embedding for pgvector search
+  // Pass embedding for pgvector search using fetch directly
   const embeddingStr = '[' + queryEmbedding.join(',') + ']';
   console.log('Embedding string length:', embeddingStr.length);
-  console.log('Threshold:', threshold, 'Limit:', effectiveLimit + offset);
 
-  // Try raw SQL query for better control
-  const { data, error } = await supabase.rpc('search_documents_by_similarity', {
-    query_embedding: embeddingStr,
-    match_threshold: threshold,
-    match_count: effectiveLimit + offset,
-    filter_user_id: user_id || null,
+  const supabaseUrl = process.env.SUPABASE_URL;
+  const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  const response = await fetch(`${supabaseUrl}/rest/v1/rpc/search_documents_by_similarity`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'apikey': supabaseKey!,
+      'Authorization': `Bearer ${supabaseKey}`,
+    },
+    body: JSON.stringify({
+      query_embedding: embeddingStr,
+      match_threshold: threshold,
+      match_count: effectiveLimit + offset,
+      filter_user_id: user_id || null,
+    }),
   });
 
-  console.log('Search result - error:', JSON.stringify(error), 'data:', JSON.stringify(data?.slice(0, 2)));
+  const data = await response.json();
+  const error = response.ok ? null : data;
+
+  console.log('Search result - status:', response.status, 'data length:', Array.isArray(data) ? data.length : 'not array');
 
   if (error) {
     console.error('RPC error details:', error);
