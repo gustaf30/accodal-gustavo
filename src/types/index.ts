@@ -142,6 +142,8 @@ export interface SearchResponse {
     embedding_length: number;
     embedding_first_5: number[];
     supabase_url: string;
+    existing_embeddings_count: number;
+    existing_embeddings: unknown;
     debug_response_status: number;
     debug_similarities: unknown;
     search_response_status: number;

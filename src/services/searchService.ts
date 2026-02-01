@@ -46,6 +46,17 @@ export async function searchDocuments(
   const supabaseUrl = process.env.SUPABASE_URL;
   const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
+  // Check if embeddings exist directly
+  const checkEmbeddingsResponse = await fetch(`${supabaseUrl}/rest/v1/document_embeddings?select=id,document_id&limit=5`, {
+    headers: {
+      'Content-Type': 'application/json',
+      'apikey': supabaseKey!,
+      'Authorization': `Bearer ${supabaseKey}`,
+    },
+  });
+  const existingEmbeddings = await checkEmbeddingsResponse.json();
+  console.log('Existing embeddings:', JSON.stringify(existingEmbeddings));
+
   // First, debug the similarity scores
   const debugResponse = await fetch(`${supabaseUrl}/rest/v1/rpc/debug_similarity`, {
     method: 'POST',
@@ -136,6 +147,8 @@ export async function searchDocuments(
       embedding_length: queryEmbedding.length,
       embedding_first_5: queryEmbedding.slice(0, 5),
       supabase_url: supabaseUrl ? supabaseUrl.substring(0, 30) + '...' : 'NOT SET',
+      existing_embeddings_count: Array.isArray(existingEmbeddings) ? existingEmbeddings.length : 0,
+      existing_embeddings: existingEmbeddings,
       debug_response_status: debugResponse.status,
       debug_similarities: debugData,
       search_response_status: response.status,
