@@ -46,45 +46,7 @@ export async function searchDocuments(
   const supabaseUrl = process.env.SUPABASE_URL;
   const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-  // Check if embeddings exist directly
-  const checkEmbeddingsResponse = await fetch(`${supabaseUrl}/rest/v1/document_embeddings?select=id,document_id&limit=5`, {
-    headers: {
-      'Content-Type': 'application/json',
-      'apikey': supabaseKey!,
-      'Authorization': `Bearer ${supabaseKey}`,
-    },
-  });
-  const existingEmbeddings = await checkEmbeddingsResponse.json();
-  console.log('Existing embeddings:', JSON.stringify(existingEmbeddings));
-
-  // Check documents table too (to verify if it's RLS issue)
-  const checkDocsResponse = await fetch(`${supabaseUrl}/rest/v1/documents?select=id,filename&limit=5`, {
-    headers: {
-      'Content-Type': 'application/json',
-      'apikey': supabaseKey!,
-      'Authorization': `Bearer ${supabaseKey}`,
-    },
-  });
-  const existingDocs = await checkDocsResponse.json();
-  console.log('Existing docs:', JSON.stringify(existingDocs));
-
-  // First, debug the similarity scores
-  const debugResponse = await fetch(`${supabaseUrl}/rest/v1/rpc/debug_similarity`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'apikey': supabaseKey!,
-      'Authorization': `Bearer ${supabaseKey}`,
-    },
-    body: JSON.stringify({
-      query_embedding: embeddingStr,
-    }),
-  });
-
-  const debugData = await debugResponse.json();
-  console.log('DEBUG similarities:', JSON.stringify(debugData));
-
-  // Now do the actual search
+  // Search using pgvector
   const response = await fetch(`${supabaseUrl}/rest/v1/rpc/search_documents_by_similarity`, {
     method: 'POST',
     headers: {
@@ -154,21 +116,6 @@ export async function searchDocuments(
     total: results.length,
     query,
     threshold,
-    debug: {
-      embedding_length: queryEmbedding.length,
-      embedding_first_5: queryEmbedding.slice(0, 5),
-      supabase_url: supabaseUrl ? supabaseUrl.substring(0, 30) + '...' : 'NOT SET',
-      supabase_key_preview: supabaseKey ? `len:${supabaseKey.length} end:${supabaseKey.slice(-10)}` : 'NOT SET',
-      existing_embeddings_count: Array.isArray(existingEmbeddings) ? existingEmbeddings.length : 0,
-      existing_embeddings: existingEmbeddings,
-      existing_docs_count: Array.isArray(existingDocs) ? existingDocs.length : 0,
-      existing_docs: existingDocs,
-      debug_response_status: debugResponse.status,
-      debug_similarities: debugData,
-      search_response_status: response.status,
-      raw_results_count: Array.isArray(responseData) ? responseData.length : 0,
-      raw_response_preview: JSON.stringify(responseData).substring(0, 200),
-    },
   };
 }
 

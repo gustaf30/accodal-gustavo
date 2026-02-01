@@ -138,21 +138,6 @@ export interface SearchResponse {
   total: number;
   query: string;
   threshold: number;
-  debug?: {
-    embedding_length: number;
-    embedding_first_5: number[];
-    supabase_url: string;
-    supabase_key_preview: string;
-    existing_embeddings_count: number;
-    existing_embeddings: unknown;
-    existing_docs_count: number;
-    existing_docs: unknown;
-    debug_response_status: number;
-    debug_similarities: unknown;
-    search_response_status: number;
-    raw_results_count: number;
-    raw_response_preview: string;
-  };
 }
 
 export interface ClassificationRequest {
