@@ -132,6 +132,11 @@ export async function searchDocuments(
     total: results.length,
     query,
     threshold,
+    debug: {
+      embedding_length: queryEmbedding.length,
+      debug_similarities: debugData,
+      raw_results_count: Array.isArray(responseData) ? responseData.length : 0,
+    },
   };
 }
 

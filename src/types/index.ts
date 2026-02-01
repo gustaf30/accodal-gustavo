@@ -138,6 +138,11 @@ export interface SearchResponse {
   total: number;
   query: string;
   threshold: number;
+  debug?: {
+    embedding_length: number;
+    debug_similarities: unknown;
+    raw_results_count: number;
+  };
 }
 
 export interface ClassificationRequest {
