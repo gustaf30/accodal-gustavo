@@ -140,8 +140,13 @@ export interface SearchResponse {
   threshold: number;
   debug?: {
     embedding_length: number;
+    embedding_first_5: number[];
+    supabase_url: string;
+    debug_response_status: number;
     debug_similarities: unknown;
+    search_response_status: number;
     raw_results_count: number;
+    raw_response_preview: string;
   };
 }
 

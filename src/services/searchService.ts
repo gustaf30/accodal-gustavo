@@ -134,8 +134,13 @@ export async function searchDocuments(
     threshold,
     debug: {
       embedding_length: queryEmbedding.length,
+      embedding_first_5: queryEmbedding.slice(0, 5),
+      supabase_url: supabaseUrl ? supabaseUrl.substring(0, 30) + '...' : 'NOT SET',
+      debug_response_status: debugResponse.status,
       debug_similarities: debugData,
+      search_response_status: response.status,
       raw_results_count: Array.isArray(responseData) ? responseData.length : 0,
+      raw_response_preview: JSON.stringify(responseData).substring(0, 200),
     },
   };
 }
