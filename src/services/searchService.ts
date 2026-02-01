@@ -41,10 +41,28 @@ export async function searchDocuments(
   // Pass embedding for pgvector search using fetch directly
   const embeddingStr = '[' + queryEmbedding.join(',') + ']';
   console.log('Embedding string length:', embeddingStr.length);
+  console.log('First 100 chars of embedding:', embeddingStr.substring(0, 100));
 
   const supabaseUrl = process.env.SUPABASE_URL;
   const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
+  // First, debug the similarity scores
+  const debugResponse = await fetch(`${supabaseUrl}/rest/v1/rpc/debug_similarity`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'apikey': supabaseKey!,
+      'Authorization': `Bearer ${supabaseKey}`,
+    },
+    body: JSON.stringify({
+      query_embedding: embeddingStr,
+    }),
+  });
+
+  const debugData = await debugResponse.json();
+  console.log('DEBUG similarities:', JSON.stringify(debugData));
+
+  // Now do the actual search
   const response = await fetch(`${supabaseUrl}/rest/v1/rpc/search_documents_by_similarity`, {
     method: 'POST',
     headers: {
