@@ -57,7 +57,8 @@ export async function createBatchJob(
   // Always send to N8N for processing
   // Redis is used only for rate limiting, not for document processing queue
   // N8N handles the actual document/audio/text processing
-  processBatchViaN8n(batchId, request).catch(console.error);
+  // IMPORTANT: Must await to ensure N8N calls complete before Vercel terminates
+  await processBatchViaN8n(batchId, request);
 
   return {
     job_id: batchId,
