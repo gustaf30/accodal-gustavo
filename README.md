@@ -265,8 +265,8 @@ To be clear, AI was a tool, not a replacement for engineering decisions:
 | 01/28 | 01/29 | 01/30 | 02/01 |
 |------|-----------|---------|---------|
 | 6 hours | 7 hours | 8 hours | 10 hours |
+**Total:** **31 hours** 
 ---
-| **Total** | **31 hours** |
 
 ## License
 
