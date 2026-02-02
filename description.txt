@@ -1,0 +1,301 @@
+Technical Assessment Instructions:
+
+Tax Document Processing System Using N8N and Supabase
+
+Tools Required:
+
+N8N (Workflow Automation)
+Supabase (Backend & Database Management)
+OpenAI, Whisper, or Custom AI Models (for NLP & Speech-to-Text)
+Message Queue (Redis/RabbitMQ) (for Agent Communication)
+Estimated Duration:
+
+Part 1: 4-6 hours
+Part 2: 6-10 hours
+Part 3 (Advanced): 10-12 hours
+Part 4: 8-10 hours
+Part 5 Client Portal (WeWeb Integration): 4-6 hours
+AI Utilization Note: Use of AI generated code IS ALLOWED and recommended. Ie Chatgpt o3 to write json to build n8n agents.
+
+Evaluation Criteria:
+
+Functional correctness, error handling, modularity, documentation, performance optimization, multi-agent workflow orchestration, and handling of diverse input types (Document, Audio, and Text).
+Effective integration of the client portal with WeWeb, including user authentication, real-time data display from Supabase, and interactive dashboards.
+Part 1: Core Document, Audio & Text Processing
+
+✅ Goal: Assess candidates' ability to automate processing of documents, audio, and text using N8N and Supabase.
+
+High-Level Context:
+
+In modern tax processing, firms receive diverse types of input data from clients:
+
+Documents: Tax forms (W-2s, 1099s), invoices, and other scanned PDFs.
+Audio: Recorded conversations from tax consultations.
+Text: Structured (digital tax forms) and unstructured (emails, legal contracts).
+Traditionally, these inputs are handled separately, leading to inconsistent processing, data silos, and inefficiencies. A unified, automated system can extract, classify, and validate tax data across all input types, reducing errors and accelerating processing times.
+
+Practical Integration Examples:
+
+Enterprise Onboarding & Compliance Checks
+
+A tax advisory firm integrates this system to:
+Automatically extract tax details from W-2/1099 documents uploaded by clients.
+Transcribe phone-call conversations where clients discuss financial details.
+Analyze emails and chat messages for structured tax data (SSNs, income details).
+Store extracted data in Supabase for real-time access by accountants.
+Task:
+
+Create an N8N workflow that:Documents:Monitors an email inbox or cloud storage for new tax documents (PDF, JPEG, PNG).
+Extracts text from scanned images using OCR (Tesseract or AWS Textract).
+Identifies document type (W-2, 1099, Business Invoice) using regex & AI classification.
+Sends extracted data to a Supabase REST API endpoint.
+Audio:Listens for uploaded audio files (MP3, WAV) in cloud storage.
+Uses Whisper AI or OpenAI Speech-to-Text to transcribe the conversation.
+Extracts relevant financial entities (SSNs, tax IDs, income figures) using NLP (spaCy, OpenAI, or Cohere).
+Stores the transcribed text and extracted entities in Supabase.
+Text:Monitors incoming emails for structured and unstructured tax information.
+Extracts relevant financial data using NLP.
+Stores extracted data in a Supabase database.
+Build a Supabase Backend:Design a PostgreSQL database schema for storing:
+Document metadata (filename, type, extracted data).
+Transcribed audio content and extracted financial details.
+Text-based tax information (emails, forms, etc.).
+Create Supabase Edge Functions to validate and store the extracted data.
+Implement basic error handling for missing fields.
+Implement Basic Error Handling:Retry failed API requests up to 3 times.
+Log failed attempts for debugging.
+Send an alert for critical failures (e.g., unreadable documents, audio errors).
+(RAG) Implement a Document Similarity Search:Store document embeddings in Supabase pgvector, Pinecone, or Weaviate.
+Retrieve past documents for validation based on similarity.
+Flag inconsistencies when new documents differ significantly from historical records.
+Technical Requirements:
+
+Use N8N function nodes for any data transformation.
+Implement environment variables in Supabase (API keys, DB connections).
+Submit N8N JSON export + Supabase API documentation.
+Part 2: Error Handling, Performance & Workflow Optimization
+
+✅ Goal: Test candidates’ ability to optimize workflows for reliability, error handling, and performance.
+
+High-Level Context:
+
+Real-world tax processing involves millions of transactions and high data accuracy requirements. Systems must be fault-tolerant, handle high loads efficiently, and securely process sensitive financial data.
+
+Without proper optimizations:
+
+Failed document extractions can cause compliance issues.
+Slow processing of tax forms can delay loan approvals and audits.
+Security vulnerabilities can expose sensitive taxpayer data.
+By implementing dead-letter queues, multi-threaded processing, and API rate-limiting, the system becomes robust, secure, and scalable.
+
+Practical Integration Examples
+
+Real-Time Alerting for Compliance Failures
+
+A government tax authority integrates:
+Real-time monitoring of failed document extractions with auto-retries.
+Slack/email notifications for critical errors.
+Batch processing for high tax-season workloads.
+Scalable Tax Filing System for Enterprises
+
+A multi-national company deploys this system to:
+Process bulk tax filings with high-speed OCR and AI-based validation.
+Prevent abuse through rate-limiting and API authentication.
+Secure sensitive data using encryption and role-based access control.
+Task:
+
+Improve Error Handling:Implement a dead letter queue (DLQ) in N8N to store failed documents for later retry.
+Design an error notification system (Slack, email, or database logs).
+Introduce exponential backoff for API retries.
+Enhance Workflow Performance:Optimize OCR extraction by processing multiple files in parallel (batch processing).
+Implement conditional branching in N8N for different document types.
+Add database indexing in Supabase to speed up retrieval.
+Implement Security & Compliance Measures:Secure API endpoints using Supabase API authentication.
+Implement rate limiting to prevent abuse.
+Ensure sensitive data (SSNs, tax IDs) is masked or encrypted.
+(KAG) Enhance Document Classification with AI:Train a classification model (e.g., OpenAI, Cohere, Hugging Face) to improve document categorization.
+Implement metadata-based classification (client type, document type, content keywords).
+Improve taxonomy mapping for better search and retrieval.
+Technical Requirements:
+
+Submit N8N workflow JSON, Supabase database schema, and a README.md with optimizations.
+Part 3 (Advanced): AI Workflow & Distributed Processing
+
+✅ Goal: Evaluate candidates’ ability to build a fully distributed, multi-agent system that automates tax data extraction across documents, audio, and text.
+
+High-Level Context:
+
+Scaling tax automation for large-scale financial institutions requires multi-agent architectures.
+Instead of a single workflow handling everything, specialized AI agents process tax data in parallel.
+This ensures:
+Simultaneous processing of documents, audio, and text.
+Dynamic error handling, with automatic retries and escalations.
+Load balancing across multiple processing agents.
+Practical Integration Examples
+
+AI-Powered Tax Advisory AssistantDistributes tax and accounting data across applications for end use and tax planning advisory recommendations to clients based on contextual data
+Assignment and routing of specialized AI agents for documents, voice transcriptions, and emails based on use case
+Uses dynamic queue-based task assignment for efficiency.
+Intelligent Document Review for Accounting FirmsAI-powered real-time document analysis.
+Classifies and validates tax-related emails with sentiment analysis.
+Auto-assigns human reviewers only for inconsistencies.
+Agent Systems Implementation
+
+1. Orchestrator-Worker System
+
+Master Orchestrator Workflow (Parent):Task ManagementManages a dynamic task queue with priority levels (P0-P4).
+Utilize the "Execute Workflow" node to call child workflows dynamically, assigning tasks based on client type, document complexity, or service package.
+Error Handling: Incorporate error management strategies such as automatic retries and conditional branching to handle failures gracefully.
+Specialized Worker Workflows (Children):Onboarding Worker:
+Analyzes client profiles with specific business rules.
+Implements industry-specific validation workflows.
+Recommends service packages based on historical data.
+Document Processing Worker:
+Handles multi-format document processing (PDF, JPEG, TIFF, PNG).
+Implements AI-powered OCR with 98%+ accuracy.
+Communication Worker:
+Generates context-aware responses using historical interactions.
+Coordinates messages across email, SMS, and notifications.
+2. Evaluator & Optimizer System
+
+Performance Monitoring Dashboard:
+Tracks:
+Success/failure rates of workers.
+Processing time distributions.
+Queue length monitoring.
+Custom KPI tracking:
+Client satisfaction scores.
+Document processing accuracy.
+Implements anomaly detection for system issues.
+Quality Control Framework:
+Multi-level validation:
+Syntax checking (data format, completeness).
+Semantic validation (business rules, consistency).
+Feedback system:
+Automated client satisfaction surveys.
+Worker performance reviews.
+3. Parallel Processing & Scalability
+
+High-Speed Parallel ProcessingSupports:
+Batch processing of 50+ documents at a time.
+Multi-threaded validation engine.
+Asynchronous execution for rapid processing.
+Implements resource management:
+Dynamic thread pool sizing to optimize computing power.
+Intelligent Data AggregationMerges results from parallel tasks.
+Resolves conflicts in extracted data.
+Uses cross-validation for accuracy.
+Technical Considerations:
+
+Data Passing Between Workflows:Ensure that data, especially binary files, is correctly passed between parent and child workflows. n8n supports passing binary data, but thorough testing is recommended to handle any potential issues.
+State Management:Maintain context and state across workflows to ensure consistency, particularly when workflows are interdependent.
+Technical Requirements:
+
+Submit:
+
+Workflow Designs: Provide diagrams illustrating the orchestration between the master and worker workflows.
+API Endpoint Documentation: Detail the interactions between Supabase and n8n workflows.
+Demo Video: A 10-minute maximum video showcasing the implemented Parent-Child Agent Framework in action.
+Part 4: Node.js Proficiency Test (Related to RAG & KAG)
+
+✅ Goal: Assess candidates’ ability to build a backend API that supports document, audio, and text processing with AI-based classification and retrieval.
+
+High-Level Context:
+
+A tax processing system needs a robust backend to support semantic search, intelligent classification, and secure API interactions. By leveraging Node.js, pgvector, and AI models, we can:
+
+Retrieve similar past tax records based on semantic meaning (RAG).
+Automatically classify documents using AI-powered entity extraction (KAG).
+Ensure the API scales dynamically while maintaining security.
+Practical Integration Examples
+
+✅ Tax AI Document Search for Compliance Audits
+
+A tax audit department uses the API to:
+Retrieve historical tax filings based on natural language queries.
+Detect anomalies in tax submissions using past data comparisons.
+Provide auditors with AI-powered tax compliance insights.
+✅ Enterprise API for Smart Tax Filing
+
+A large tax consulting firm integrates the API to:
+Auto-classify incoming tax documents based on AI-based taxonomy mapping.
+Support batch processing of multiple document types (W-2, 1099, Invoices).
+Use JWT authentication and rate-limiting to secure financial data.
+Task:
+
+Develop a Document Retrieval API (RAG Implementation)Implement a Node.js Express API that connects to Supabase pgvector for semantic search.
+Perform semantic search on past tax documents for similarity matching.
+Enhance Document Classification (KAG Implementation)Build a classification service in Node.js using a pre-trained AI model.
+Integrate the service with N8N workflows for automation.
+Implement Asynchronous Processing & ScalabilityUse worker threads or message queues for parallel processing.
+Implement batch processing for bulk document retrieval & classification
+Ensure API Security & Error HandlingSecure API endpoints with JWT authentication.
+Implement rate limiting to prevent abuse.
+Technical Requirements:
+
+Use TypeScript for maintainability.
+Deploy a working version on a cloud service (Heroku, Vercel, or AWS Lambda).
+Submit source code + API documentation (Swagger/OpenAPI).
+Part 5: WeWeb Client Portal Integration
+
+Objective:
+
+To create an interactive client portal using WeWeb that integrates seamlessly with the existing tax document processing system, providing a user-friendly interface for clients to access and manage their tax-related data.
+
+High-Level Context:
+
+Clients need a modern, responsive portal to:
+
+Upload tax documents and audio files.
+Track the status of their submissions.
+View processed results and extracted data in real time.
+Interact with tax advisors via secure messaging.
+Practical Integration Examples:
+
+Client Dashboard:Real-Time Data Display:Leverage Supabase as the backend to fetch processed data.
+Use WeWeb’s dynamic components to display document statuses, processing logs, and audit trails.
+Data Visualization:Integrate charts and progress indicators showing the extraction and validation process.
+User Authentication & Profile Management:Secure Login:Integrate Supabase authentication with WeWeb to ensure secure client access.
+Profile Dashboard:Allow clients to update personal information, manage uploaded documents, and view history.
+Document Upload & Feedback System:Interactive Forms:Use WeWeb’s drag-and-drop interface to enable easy document and audio file uploads.
+Feedback & Notifications:Display real-time alerts and notifications regarding processing status and errors.
+Provide an integrated messaging system for communication between clients and support teams.
+Integration with Backend Workflows:Data Sync:Utilize REST API endpoints on Supabase to sync data between the WeWeb portal and the N8N workflows.
+Dashboard Widgets:Create custom widgets in WeWeb that call Supabase functions, enabling clients to perform searches (using the RAG implementation) or trigger re-processing requests if needed.
+Technical Requirements:
+
+Design & Development:Create a responsive client portal using WeWeb’s no-code/low-code platform.
+Integrate the portal with Supabase for authentication, data storage, and real-time updates.
+API Integration:Ensure WeWeb connects with the existing Supabase REST API endpoints.
+Document the integration steps in a dedicated section of the overall API documentation.
+User Experience (UX):Focus on a clean, intuitive design that facilitates quick uploads, easy navigation, and clear presentation of data.
+Submission:Provide the WeWeb project export along with a README.md detailing setup, integration steps, and design considerations.
+Submission Guidelines
+
+Part 1 Submission:
+
+N8N workflow (JSON export).
+Supabase API documentation.
+Brief README.md on setup & challenges faced.
+Part 2 Submission:
+
+Updated workflow JSON + optimization documentation.
+Supabase database schema with indexes & security measures.
+Part 3 Submission:
+
+Detailed breakdown of AI workflow logic.
+Scalability & parallel processing strategy.
+Dashboard demo (screenshots or video).
+Part 4 Submission:
+
+Source Code: GitHub repository with a structured project layout.
+API Documentation: Swagger/OpenAPI + a Postman collection.
+Setup Guide: README.md with installation & deployment steps.
+WeWeb Client Portal Submission:
+
+Exported WeWeb project files.
+Integration documentation detailing connection to Supabase and usage within the client portal.
+A brief explanation of the portal's features and client use cases.
+Bonus points:
+
+Explanation how you used AI to speed up the development of the above submissions.
