@@ -29,6 +29,7 @@ import {
   handleFileUpload,
   handleMultipleFileUpload,
   handleBase64Upload,
+  handleBatchBase64Upload,
   handleProcessFromUrl,
 } from '../controllers/uploadController';
 import { authMiddleware, optionalAuthMiddleware, apiKeyMiddleware } from '../middleware/auth';
@@ -200,6 +201,14 @@ router.post(
   rateLimiter({ limit: 20, windowMs: 60000 }),
   optionalAuthMiddleware,
   handleBase64Upload
+);
+
+// Upload multiple files via base64 (batch processing)
+router.post(
+  '/upload/base64/batch',
+  rateLimiter({ limit: 5, windowMs: 60000 }),
+  optionalAuthMiddleware,
+  handleBatchBase64Upload
 );
 
 // Process file from URL (file already in Supabase Storage)

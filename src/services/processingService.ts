@@ -71,6 +71,7 @@ export async function createBatchJob(
 /**
  * Process batch items by delegating to N8N Master Orchestrator
  * N8N handles all OCR, transcription, classification, and embedding generation
+ * Items are processed in PARALLEL for maximum throughput
  */
 async function processBatchViaN8n(
   batchId: string,
@@ -85,15 +86,15 @@ async function processBatchViaN8n(
     .update({ status: 'processing' })
     .eq('batch_id', batchId);
 
-  for (let i = 0; i < request.items.length; i++) {
-    const item = request.items[i];
-
+  // Process all items in PARALLEL
+  const processingPromises = request.items.map(async (item, i) => {
     try {
       // Send to N8N Master Orchestrator
       const response = await fetch(n8nUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'ngrok-skip-browser-warning': 'true',
         },
         body: JSON.stringify({
           task_type: item.type,
@@ -132,6 +133,8 @@ async function processBatchViaN8n(
         })
         .eq('batch_id', batchId)
         .eq('item_index', i);
+
+      return { success: true, index: i };
     } catch (error) {
       // Update batch item as failed
       await supabase
@@ -142,8 +145,13 @@ async function processBatchViaN8n(
         })
         .eq('batch_id', batchId)
         .eq('item_index', i);
+
+      return { success: false, index: i, error };
     }
-  }
+  });
+
+  // Wait for all items to be sent to N8N
+  await Promise.all(processingPromises);
 
   // Check final status
   const { data: items } = await supabase
@@ -257,7 +265,10 @@ export async function enqueueProcessingTask(
   const n8nUrl = getN8nOrchestratorUrl();
   const response = await fetch(n8nUrl, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      'ngrok-skip-browser-warning': 'true',
+    },
     body: JSON.stringify({
       task_type: type,
       priority,

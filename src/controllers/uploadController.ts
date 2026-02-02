@@ -80,6 +80,7 @@ export async function handleProcessFromUrl(
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        'ngrok-skip-browser-warning': 'true',
       },
       body: JSON.stringify({
         task_type: taskType,
@@ -260,6 +261,155 @@ export async function handleBase64Upload(
         filename,
         file_url: fileUrl,
         storage_path: storagePath,
+        status: 'queued',
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+// Handle batch base64 upload (multiple files at once)
+export async function handleBatchBase64Upload(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const { files, user_id } = req.body;
+    const userId = user_id || (req as any).userId;
+
+    if (!files || !Array.isArray(files) || files.length === 0) {
+      res.status(400).json({
+        error: {
+          code: 'INVALID_REQUEST',
+          message: 'files array is required with at least one file',
+          timestamp: new Date().toISOString(),
+        },
+      });
+      return;
+    }
+
+    if (files.length > 20) {
+      res.status(400).json({
+        error: {
+          code: 'INVALID_REQUEST',
+          message: 'Maximum 20 files allowed per batch',
+          timestamp: new Date().toISOString(),
+        },
+      });
+      return;
+    }
+
+    const supabase = getSupabaseClient();
+
+    // Upload all files in parallel
+    const uploadPromises = files.map(async (file: { filename: string; base64_content: string; mime_type?: string }) => {
+      if (!file.filename || !file.base64_content) {
+        return { success: false, filename: file.filename, error: 'Missing filename or base64_content' };
+      }
+
+      try {
+        // Clean base64 content and detect MIME type
+        const { base64: cleanedBase64, detectedMime } = cleanBase64Content(file.base64_content);
+
+        // Determine final MIME type
+        let finalMimeType = file.mime_type;
+        if (!finalMimeType || finalMimeType === 'application/octet-stream') {
+          finalMimeType = detectedMime || getMimeTypeFromFilename(file.filename);
+        }
+
+        // Decode base64 to buffer
+        const buffer = Buffer.from(cleanedBase64, 'base64');
+
+        // Generate unique filename
+        const ext = file.filename.split('.').pop();
+        const uniqueFilename = `${uuidv4()}.${ext}`;
+        const storagePath = `uploads/${userId || 'anonymous'}/${uniqueFilename}`;
+
+        // Upload to Supabase Storage
+        const { error: uploadError } = await supabase.storage
+          .from('documents')
+          .upload(storagePath, buffer, {
+            contentType: finalMimeType,
+            upsert: false,
+          });
+
+        if (uploadError) {
+          return { success: false, filename: file.filename, error: uploadError.message };
+        }
+
+        // Get public URL
+        const { data: urlData } = supabase.storage
+          .from('documents')
+          .getPublicUrl(storagePath);
+
+        const isAudio = finalMimeType.startsWith('audio/');
+
+        return {
+          success: true,
+          filename: file.filename,
+          type: isAudio ? 'audio' : 'document',
+          data: {
+            filename: file.filename,
+            file_url: urlData.publicUrl,
+            mime_type: finalMimeType,
+            storage_path: storagePath,
+          },
+        };
+      } catch (err) {
+        return {
+          success: false,
+          filename: file.filename,
+          error: err instanceof Error ? err.message : 'Upload failed'
+        };
+      }
+    });
+
+    const uploadResults = await Promise.all(uploadPromises);
+
+    // Filter successful uploads
+    const successfulUploads = uploadResults.filter((r) => r.success) as Array<{
+      success: true;
+      filename: string;
+      type: 'document' | 'audio';
+      data: Record<string, unknown>;
+    }>;
+
+    const failedUploads = uploadResults.filter((r) => !r.success);
+
+    if (successfulUploads.length === 0) {
+      res.status(500).json({
+        error: {
+          code: 'STORAGE_ERROR',
+          message: 'All file uploads failed',
+          failures: failedUploads,
+          timestamp: new Date().toISOString(),
+        },
+      });
+      return;
+    }
+
+    // Create batch job with all items
+    const job = await createBatchJob({
+      items: successfulUploads.map((u) => ({
+        type: u.type,
+        data: u.data,
+      })),
+      user_id: userId,
+    });
+
+    res.json({
+      success: true,
+      data: {
+        job_id: job.job_id,
+        total_files: successfulUploads.length,
+        failed_files: failedUploads.length,
+        files: successfulUploads.map((u) => ({
+          filename: u.filename,
+          file_url: u.data.file_url,
+        })),
+        failures: failedUploads.length > 0 ? failedUploads : undefined,
         status: 'queued',
       },
     });

@@ -382,7 +382,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Collect worker result and prepare status update\nconst workerResult = $input.first().json;\nconst taskData = $('Prepare Worker Data').first().json;\n\nconst success = workerResult.success !== false;\nconst status = success ? 'completed' : 'failed';\n\nreturn {\n  json: {\n    task_id: taskData.task_id,\n    status: status,\n    result: workerResult,\n    completed_at: new Date().toISOString()\n  }\n};"
+        "jsCode": "// Collect worker result and prepare status update\n// Also extract batch context from the original task payload\nconst workerResult = $input.first().json;\nconst taskData = $('Prepare Worker Data').first().json;\n\nconst success = workerResult.success !== false;\nconst status = success ? 'completed' : 'failed';\n\n// Extract batch context from payload\nconst batchId = taskData.payload?.batch_id || null;\nconst itemIndex = taskData.payload?.item_index;\n\nreturn {\n  json: {\n    task_id: taskData.task_id,\n    status: status,\n    result: workerResult,\n    completed_at: new Date().toISOString(),\n    // Batch context\n    batch_id: batchId,\n    item_index: itemIndex,\n    has_batch_context: batchId !== null\n  }\n};"
       },
       "id": "collect-result",
       "name": "Collect Result",
@@ -461,14 +461,251 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ worker_name: 'orchestrator', metric_type: 'task_' + $json.status, value: 1, tags: { task_id: $json.task_id } }) }}",
+        "jsonBody": "={{ JSON.stringify({ worker_name: 'orchestrator', metric_type: 'task_' + $('Collect Result').first().json.status, value: 1, tags: { task_id: $('Collect Result').first().json.task_id } }) }}",
         "options": {}
       },
       "id": "log-metric",
       "name": "Log Completion Metric",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
+      "position": [2890, 500]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-batch-context",
+              "leftValue": "={{ $('Collect Result').first().json.has_batch_context }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "has-batch-context",
+      "name": "Has Batch Context?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
       "position": [2450, 500]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{$env.SUPABASE_URL}}/rest/v1/batch_items?batch_id=eq.{{ $('Collect Result').first().json.batch_id }}&item_index=eq.{{ $('Collect Result').first().json.item_index }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "apikey",
+              "value": "={{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer {{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ status: $('Collect Result').first().json.status, result: { document_id: $('Collect Result').first().json.result?.document_id, task_id: $('Collect Result').first().json.task_id }, completed_at: $('Collect Result').first().json.completed_at, error_message: $('Collect Result').first().json.status === 'failed' ? ($('Collect Result').first().json.result?.error || 'Processing failed') : null }) }}",
+        "options": {}
+      },
+      "id": "update-batch-item",
+      "name": "Update Batch Item",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2670, 400]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{$env.SUPABASE_URL}}/rest/v1/batch_items?batch_id=eq.{{ $('Collect Result').first().json.batch_id }}&select=status",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer {{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "fetch-batch-items",
+      "name": "Fetch Batch Items Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2890, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Calculate batch status based on all item statuses\nconst items = $input.first().json;\nconst itemsArray = Array.isArray(items) ? items : [items];\n\n// Count items by status\nconst counts = {\n  pending: 0,\n  queued: 0,\n  processing: 0,\n  completed: 0,\n  failed: 0\n};\n\nfor (const item of itemsArray) {\n  const status = item.status || 'pending';\n  if (counts.hasOwnProperty(status)) {\n    counts[status]++;\n  }\n}\n\nconst total = itemsArray.length;\nconst inProgress = counts.pending + counts.queued + counts.processing;\nconst allDone = inProgress === 0;\n\n// Determine batch status\nlet batchStatus = 'processing';\nif (allDone) {\n  if (counts.failed === 0) {\n    batchStatus = 'completed';\n  } else if (counts.completed === 0) {\n    batchStatus = 'failed';\n  } else {\n    batchStatus = 'partial';\n  }\n}\n\nreturn {\n  json: {\n    batch_id: $('Collect Result').first().json.batch_id,\n    counts: counts,\n    total: total,\n    all_done: allDone,\n    batch_status: batchStatus\n  }\n};"
+      },
+      "id": "calculate-batch-status",
+      "name": "Calculate Batch Status",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3110, 400]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "all-items-done",
+              "leftValue": "={{ $json.all_done }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "all-items-done",
+      "name": "All Items Done?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [3330, 400]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{$env.SUPABASE_URL}}/rest/v1/batch_jobs?batch_id=eq.{{ $json.batch_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "apikey",
+              "value": "={{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer {{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ status: $json.batch_status, completed_at: new Date().toISOString() }) }}",
+        "options": {}
+      },
+      "id": "update-batch-job",
+      "name": "Update Batch Job Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [3550, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.SUPABASE_URL}}/rest/v1/worker_metrics",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "apikey",
+              "value": "={{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer {{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ worker_name: 'orchestrator', metric_type: 'batch_' + $('Calculate Batch Status').first().json.batch_status, value: 1, tags: { batch_id: $('Calculate Batch Status').first().json.batch_id, total_items: $('Calculate Batch Status').first().json.total, completed: $('Calculate Batch Status').first().json.counts.completed, failed: $('Calculate Batch Status').first().json.counts.failed } }) }}",
+        "options": {}
+      },
+      "id": "log-batch-metric",
+      "name": "Log Batch Completion Metric",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [3770, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.SUPABASE_URL}}/rest/v1/worker_metrics",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "apikey",
+              "value": "={{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer {{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ worker_name: 'orchestrator', metric_type: 'task_' + $('Collect Result').first().json.status, value: 1, tags: { task_id: $('Collect Result').first().json.task_id, batch_id: $('Collect Result').first().json.batch_id } }) }}",
+        "options": {}
+      },
+      "id": "log-metric-after-batch",
+      "name": "Log Metric After Batch",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [3990, 400]
     }
   ],
   "connections": {
@@ -709,7 +946,98 @@
       "main": [
         [
           {
+            "node": "Has Batch Context?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Batch Context?": {
+      "main": [
+        [
+          {
+            "node": "Update Batch Item",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
             "node": "Log Completion Metric",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Batch Item": {
+      "main": [
+        [
+          {
+            "node": "Fetch Batch Items Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Batch Items Status": {
+      "main": [
+        [
+          {
+            "node": "Calculate Batch Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calculate Batch Status": {
+      "main": [
+        [
+          {
+            "node": "All Items Done?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "All Items Done?": {
+      "main": [
+        [
+          {
+            "node": "Update Batch Job Status",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log Metric After Batch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Batch Job Status": {
+      "main": [
+        [
+          {
+            "node": "Log Batch Completion Metric",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Batch Completion Metric": {
+      "main": [
+        [
+          {
+            "node": "Log Metric After Batch",
             "type": "main",
             "index": 0
           }
