@@ -8,11 +8,9 @@ import {
 import { v4 as uuidv4 } from 'uuid';
 import {
   enqueueTask,
-  enqueueBatch,
   getTaskStatus,
   getQueueStats,
   TaskPriority,
-  QueueTask,
 } from './queueService';
 
 // Get N8N orchestrator URL from environment
@@ -23,7 +21,7 @@ function getN8nOrchestratorUrl(): string {
 
 /**
  * Create a batch job for processing multiple items
- * Uses Redis queue if available, otherwise falls back to Supabase
+ * Sends directly to N8N for processing
  */
 export async function createBatchJob(
   request: BatchProcessingRequest
@@ -56,61 +54,9 @@ export async function createBatchJob(
     throw new Error(`Failed to create batch items: ${itemsError.message}`);
   }
 
-  // Determine priority
-  const priority = request.priority === 'high'
-    ? TaskPriority.HIGH
-    : request.priority === 'low'
-      ? TaskPriority.LOW
-      : TaskPriority.NORMAL;
-
-  // Try to use Redis queue first, then N8N webhook
-  const useRedisQueue = process.env.REDIS_HOST || process.env.REDIS_URL;
-
-  if (useRedisQueue) {
-    // Enqueue tasks to Redis queue
-    try {
-      const items = request.items.map((item) => ({
-        type: item.type as QueueTask['type'],
-        payload: {
-          ...item.data,
-          user_id: request.user_id,
-          batch_id: batchId,
-        },
-      }));
-
-      const result = await enqueueBatch(items, { priority });
-
-      // Update batch items with task IDs
-      for (let i = 0; i < result.taskIds.length; i++) {
-        await supabase
-          .from('batch_items')
-          .update({
-            status: 'queued',
-            result: { task_id: result.taskIds[i] },
-          })
-          .eq('batch_id', batchId)
-          .eq('item_index', i);
-      }
-
-      // Update batch job status
-      await supabase
-        .from('batch_jobs')
-        .update({ status: 'processing', queued_count: result.taskIds.length })
-        .eq('batch_id', batchId);
-
-      return {
-        job_id: batchId,
-        total_items: request.items.length,
-        status: 'queued',
-        created_at: new Date().toISOString(),
-        queue_source: result.queue,
-      };
-    } catch (error) {
-      console.error('Redis queue failed, falling back to N8N webhook:', error);
-    }
-  }
-
-  // Fallback: Process via N8N webhook (fire and forget)
+  // Always send to N8N for processing
+  // Redis is used only for rate limiting, not for document processing queue
+  // N8N handles the actual document/audio/text processing
   processBatchViaN8n(batchId, request).catch(console.error);
 
   return {
