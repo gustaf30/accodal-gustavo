@@ -122,6 +122,51 @@ export async function handleProcessFromUrl(
   }
 }
 
+// Detect MIME type from filename extension
+function getMimeTypeFromFilename(filename: string): string {
+  const ext = filename.split('.').pop()?.toLowerCase();
+  const mimeTypes: Record<string, string> = {
+    'png': 'image/png',
+    'jpg': 'image/jpeg',
+    'jpeg': 'image/jpeg',
+    'gif': 'image/gif',
+    'webp': 'image/webp',
+    'pdf': 'application/pdf',
+    'mp3': 'audio/mpeg',
+    'wav': 'audio/wav',
+    'm4a': 'audio/x-m4a',
+    'ogg': 'audio/ogg',
+  };
+  return mimeTypes[ext || ''] || 'application/octet-stream';
+}
+
+// Clean base64 content - remove data URL prefix if present
+function cleanBase64Content(content: string): { base64: string; detectedMime?: string } {
+  // Handle various malformed formats from WeWeb
+  // Format: "data:image/png;base64,iVBORw0..." or "dataimage/pngbase64iVBORw0..."
+
+  // Standard data URL format
+  const dataUrlMatch = content.match(/^data:([^;,]+)?(?:;base64)?,(.*)$/);
+  if (dataUrlMatch) {
+    return {
+      base64: dataUrlMatch[2],
+      detectedMime: dataUrlMatch[1] || undefined,
+    };
+  }
+
+  // Malformed format without colons/semicolons: "dataimage/pngbase64..."
+  const malformedMatch = content.match(/^data?(image\/\w+|audio\/\w+|application\/\w+)base64,?(.*)$/i);
+  if (malformedMatch) {
+    return {
+      base64: malformedMatch[2],
+      detectedMime: malformedMatch[1],
+    };
+  }
+
+  // Already clean base64
+  return { base64: content };
+}
+
 // Handle base64 upload (easier for WeWeb)
 export async function handleBase64Upload(
   req: Request,
@@ -145,8 +190,17 @@ export async function handleBase64Upload(
 
     const supabase = getSupabaseClient();
 
+    // Clean base64 content and detect MIME type
+    const { base64: cleanedBase64, detectedMime } = cleanBase64Content(base64_content);
+
+    // Determine final MIME type (priority: detected from base64 > provided > from filename)
+    let finalMimeType = mime_type;
+    if (!finalMimeType || finalMimeType === 'application/octet-stream') {
+      finalMimeType = detectedMime || getMimeTypeFromFilename(filename);
+    }
+
     // Decode base64 to buffer
-    const buffer = Buffer.from(base64_content, 'base64');
+    const buffer = Buffer.from(cleanedBase64, 'base64');
 
     // Generate unique filename
     const ext = filename.split('.').pop();
@@ -157,7 +211,7 @@ export async function handleBase64Upload(
     const { error: uploadError } = await supabase.storage
       .from('documents')
       .upload(storagePath, buffer, {
-        contentType: mime_type || 'application/octet-stream',
+        contentType: finalMimeType,
         upsert: false,
       });
 
@@ -180,7 +234,7 @@ export async function handleBase64Upload(
     const fileUrl = urlData.publicUrl;
 
     // Determine item type
-    const isAudio = mime_type?.startsWith('audio/');
+    const isAudio = finalMimeType.startsWith('audio/');
     const itemType = isAudio ? 'audio' : 'document';
 
     // Create batch job with single item
@@ -191,7 +245,7 @@ export async function handleBase64Upload(
           data: {
             filename,
             file_url: fileUrl,
-            mime_type,
+            mime_type: finalMimeType,
             storage_path: storagePath,
           },
         },
