@@ -22,8 +22,9 @@ function getOpenAIClient(): OpenAI {
     const config = getConfig();
     openaiClient = new OpenAI({
       apiKey: config.openaiApiKey,
-      timeout: 60000,
-      maxRetries: 3,
+      timeout: 120000, // 2 minutes for serverless cold starts
+      maxRetries: 5,
+      fetch: globalThis.fetch, // Use native fetch for better compatibility
     });
   }
   return openaiClient;
