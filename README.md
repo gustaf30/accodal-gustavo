@@ -1,304 +1,281 @@
 # Tax Document Processing System
 
-A comprehensive tax document processing system built with N8N, Supabase, OpenAI/Whisper, Redis, and a Node.js API for WeWeb integration.
+A comprehensive tax document processing system built with N8N, Supabase, OpenAI, Redis, and Node.js — designed to automate the extraction, classification, and retrieval of tax-related documents, audio recordings, and text data.
+
+## Live Demo
+
+- **API**: https://accodal-gustavo.vercel.app/api/v1
+- **WeWeb Portal**: https://c13915f5-e1e8-42de-89a2-a7fc500781d1.weweb-preview.io/register
+
+---
 
 ## Features
 
-- **Document Processing**: OCR and classification using GPT-4 Vision
-- **Audio Transcription**: Speech-to-text using OpenAI Whisper
-- **Text Extraction**: Email and text content analysis
-- **RAG Search**: Semantic search using pgvector embeddings
-- **KAG Classification**: AI-powered document categorization with taxonomy
-- **Batch Processing**: Handle large volumes of documents
-- **Error Handling**: Dead Letter Queue with exponential backoff
-- **Monitoring**: Performance dashboard and alerts
+| Feature | Description |
+|---------|-------------|
+| **Document OCR** | Extract text from W-2, 1099, invoices using GPT-4 Vision |
+| **Audio Transcription** | Convert recordings to text with OpenAI Whisper |
+| **AI Classification** | Automatic document type detection and categorization |
+| **RAG Search** | Semantic search using pgvector embeddings |
+| **Batch Processing** | Process 50+ documents in parallel |
+| **Priority Queue** | Redis-based queue with P0-P4 priority levels |
+| **Error Handling** | Dead Letter Queue with exponential backoff |
+| **Client Portal** | WeWeb-based interface for end users |
+
+---
 
 ## Architecture
 
 ```
 ┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
-│   WeWeb Client  │────▶│   Node.js API   │────▶│    Supabase     │
-│     Portal      │     │   (Vercel)      │     │   (PostgreSQL)  │
-└─────────────────┘     └─────────────────┘     └─────────────────┘
-                               │                        │
-                               ▼                        │
-                        ┌─────────────────┐             │
-                        │      N8N        │─────────────┘
-                        │   Workflows     │
-                        └─────────────────┘
-                               │
-                               ▼
-                        ┌─────────────────┐
-                        │    OpenAI       │
-                        │  GPT-4/Whisper  │
-                        └─────────────────┘
+│  WeWeb Portal   │────▶│   Node.js API   │────▶│    Supabase     │
+│  (Client UI)    │     │   (Vercel)      │     │   PostgreSQL    │
+└─────────────────┘     └────────┬────────┘     │   + pgvector    │
+                                 │              └─────────────────┘
+                                 │
+                    ┌────────────┴────────────┐
+                    │                         │
+                    ▼                         ▼
+             ┌─────────────┐          ┌─────────────┐
+             │    Redis    │          │     N8N     │
+             │   Queue     │◀────────▶│  Workflows  │
+             │  (Priority) │          │  (Workers)  │
+             └─────────────┘          └──────┬──────┘
+                                             │
+                                             ▼
+                                      ┌─────────────┐
+                                      │   OpenAI    │
+                                      │ GPT-4/Whisper│
+                                      └─────────────┘
 ```
+
+---
+
+## Tech Stack
+
+| Layer | Technology |
+|-------|------------|
+| Frontend | WeWeb (No-code) |
+| API | Node.js, Express, TypeScript |
+| Database | Supabase (PostgreSQL + pgvector) |
+| Queue | Redis Cloud |
+| Workflows | N8N (Self-hosted) |
+| AI/ML | OpenAI GPT-4 Vision, Whisper, Embeddings |
+| Deployment | Vercel (Serverless) |
+
+---
 
 ## Quick Start
 
 ### Prerequisites
 
 - Node.js 18+
-- Docker & Docker Compose
 - Supabase account
 - OpenAI API key
+- Redis instance (optional)
+- N8N instance
 
-### 1. Clone and Install
+### Installation
 
 ```bash
-cd accodal-gustavo
+# Clone repository
+git clone https://github.com/gustaf30/accodal-gustavo.git
+cd tax-document-processing
+
+# Install dependencies
 npm install
-```
 
-### 2. Configure Environment
-
-```bash
+# Configure environment
 cp .env.example .env
 # Edit .env with your credentials
-```
 
-### 3. Start Infrastructure
-
-```bash
-docker-compose up -d
-```
-
-### 4. Apply Database Schema
-
-Run the SQL migration in Supabase Dashboard:
-```
-supabase/migrations/001_initial_schema.sql
-```
-
-### 5. Deploy Supabase Edge Functions
-
-```bash
-# Install Supabase CLI
-npm install -g supabase
-
-# Login and link project
-supabase login
-supabase link --project-ref your-project-ref
-
-# Deploy functions
-supabase functions deploy validate-document
-supabase functions deploy validate-audio
-supabase functions deploy validate-text
-supabase functions deploy store-embedding
-```
-
-### 6. Import N8N Workflows
-
-1. Access N8N at http://localhost:5678
-2. Import workflows from `n8n-workflows/` directory
-3. Configure credentials (OpenAI, Supabase)
-
-### 7. Start API Server
-
-```bash
-# Development
+# Run development server
 npm run dev
-
-# Production
-npm run build
-npm start
-```
-
-## API Endpoints
-
-### Search (RAG)
-
-```bash
-# Semantic search
-POST /api/v1/search
-{
-  "query": "W-2 wage information",
-  "threshold": 0.7,
-  "limit": 10
-}
-
-# Find similar documents
-GET /api/v1/documents/{id}/similar
-
-# Check inconsistencies
-GET /api/v1/documents/{id}/inconsistencies
-```
-
-### Classification (KAG)
-
-```bash
-# Classify document
-POST /api/v1/classify
-{
-  "content": "base64-encoded-image",
-  "content_type": "base64_image",
-  "filename": "document.png"
-}
-
-# Batch classification
-POST /api/v1/classify/batch
-{
-  "items": [...]
-}
-```
-
-### Documents
-
-```bash
-# List documents
-GET /api/v1/documents?type=W-2&status=completed
-
-# Get document
-GET /api/v1/documents/{id}
-
-# Reprocess document
-POST /api/v1/documents/{id}/reprocess
-
-# Delete document
-DELETE /api/v1/documents/{id}
-```
-
-### Batch Processing
-
-```bash
-# Create batch job
-POST /api/v1/batch/process
-{
-  "items": [
-    { "type": "document", "data": {...} },
-    { "type": "audio", "data": {...} }
-  ]
-}
-
-# Check job status
-GET /api/v1/batch/jobs/{jobId}
-```
-
-## N8N Workflows
-
-### Core Processing
-- `document-processing.json` - Document OCR and classification
-- `audio-processing.json` - Audio transcription
-- `text-processing.json` - Email/text extraction
-
-### Error Handling
-- `dlq-handler.json` - Dead Letter Queue processing
-- `error-notifications.json` - Alert routing
-
-### Orchestration
-- `master-orchestrator.json` - Task distribution
-- `workers/document-worker.json` - Document processing worker
-- `workers/audio-worker.json` - Audio processing worker
-- `workers/text-worker.json` - Text processing worker
-- `workers/onboarding-worker.json` - Client onboarding
-- `workers/communication-worker.json` - Response generation
-
-### Monitoring
-- `monitoring/performance-dashboard.json` - Metrics collection
-
-## Database Schema
-
-### Core Tables
-- `documents` - Processed tax documents
-- `audio_transcriptions` - Audio transcriptions
-- `text_extractions` - Email/text content
-- `document_embeddings` - Vector embeddings for RAG
-
-### System Tables
-- `processing_logs` - Audit trail
-- `dead_letter_queue` - Failed processing items
-- `error_notifications` - Alert history
-- `task_queue` - Orchestration queue
-- `worker_metrics` - Performance metrics
-- `audit_log` - Compliance logging
-
-## Deployment
-
-### Vercel Deployment
-
-```bash
-# Install Vercel CLI
-npm install -g vercel
-
-# Deploy
-vercel
-
-# Set environment variables
-vercel env add SUPABASE_URL
-vercel env add SUPABASE_SERVICE_ROLE_KEY
-vercel env add OPENAI_API_KEY
-vercel env add JWT_SECRET
 ```
 
 ### Environment Variables
 
-| Variable | Description |
-|----------|-------------|
-| `SUPABASE_URL` | Supabase project URL |
-| `SUPABASE_SERVICE_ROLE_KEY` | Supabase service role key |
-| `OPENAI_API_KEY` | OpenAI API key |
-| `JWT_SECRET` | JWT signing secret |
-| `VALID_API_KEYS` | Comma-separated API keys |
-| `REDIS_URL` | Redis connection URL (optional) |
-
-## WeWeb Integration
-
-### Setup
-
-1. Create WeWeb project
-2. Add Supabase plugin
-3. Configure authentication
-4. Create pages:
-   - `/login` - Authentication
-   - `/dashboard` - Document overview
-   - `/upload` - File upload
-   - `/search` - RAG search interface
-
-### API Integration
-
-Use the REST API plugin to connect to endpoints:
-
-```javascript
-// Search documents
-await $ww.http.post('https://your-api.vercel.app/api/v1/search', {
-  query: searchQuery,
-  user_id: currentUser.id
-});
-
-// Upload document
-await $ww.http.post('https://your-api.vercel.app/api/v1/batch/process', {
-  items: [{ type: 'document', data: fileData }],
-  user_id: currentUser.id
-});
+```env
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=your-service-key
+SUPABASE_ANON_KEY=your-anon-key
+OPENAI_API_KEY=your-openai-key
+REDIS_URL=redis://user:pass@host:port
+N8N_WEBHOOK_URL=https://your-n8n.com
 ```
+
+---
+
+## API Endpoints
+
+### Core Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/health` | Health check |
+| POST | `/search` | Semantic search (RAG) |
+| POST | `/classify` | Document classification (KAG) |
+| POST | `/upload/base64` | Upload via base64 |
+| GET | `/documents` | List documents |
+| GET | `/documents/:id` | Get document details |
+| POST | `/batch/process` | Batch processing |
+| GET | `/stats` | Processing statistics |
+
+### Example: Semantic Search
+
+```bash
+curl -X POST https://accodal-gustavo.vercel.app/api/v1/search \
+  -H "Content-Type: application/json" \
+  -d '{"query": "invoice total", "threshold": 0.3, "limit": 10}'
+```
+
+---
+
+## Project Structure
+
+```
+├── src/
+│   ├── controllers/      # Request handlers
+│   ├── services/         # Business logic
+│   ├── middleware/       # Auth, rate limiting
+│   ├── routes/           # API routes
+│   └── types/            # TypeScript interfaces
+├── submissions/          # Assessment deliverables
+│   ├── part-1/          # Core processing
+│   ├── part-2/          # Error handling
+│   ├── part-3/          # Distributed processing
+│   ├── part-4/          # Node.js API
+│   └── part-5/          # WeWeb portal
+├── scripts/              # Utility scripts
+├── docs/                 # Documentation
+└── assets/               # Test files
+```
+
+---
+
+## How AI Accelerated Development
+
+> **Note**: This section explains how AI tools were leveraged to speed up the development process while maintaining code quality and architectural decisions.
+
+### 1. N8N Workflow Design
+
+AI assistance was particularly valuable for designing N8N workflows. Instead of manually configuring each node, I described the desired flow in natural language and used AI to:
+
+- Generate initial JSON workflow structures
+- Suggest optimal node configurations for OpenAI integration
+- Debug complex expression syntax in N8N function nodes
+- Create error handling patterns with proper retry logic
+
+**Example prompt used:**
+> "Create an N8N workflow that receives a webhook, downloads a file, sends it to GPT-4 Vision for OCR, extracts structured data, and saves to Supabase"
+
+This saved approximately **3-4 hours** of manual workflow configuration and trial-and-error debugging.
+
+### 2. Database Schema Design
+
+For the PostgreSQL schema with pgvector, AI helped:
+
+- Design the optimal table structure for document storage
+- Create the `match_documents` function for vector similarity search
+- Generate proper indexes (HNSW) for fast embedding queries
+- Implement Row Level Security (RLS) policies
+
+I provided the requirements and AI generated the SQL, which I then reviewed and adapted to our specific needs.
+
+### 3. TypeScript API Development
+
+The Node.js API development was accelerated by using AI for:
+
+- **Boilerplate generation**: Controllers, services, and middleware structure
+- **Type definitions**: Complex TypeScript interfaces for API responses
+- **Error handling patterns**: Consistent error response format across endpoints
+- **Rate limiting logic**: Redis-based sliding window implementation
+
+I wrote the core business logic myself, but AI helped with repetitive patterns and best practices implementation.
+
+### 4. OpenAI Integration
+
+AI was instrumental in crafting effective prompts for:
+
+- **Document OCR**: Optimizing GPT-4 Vision prompts for accurate text extraction
+- **Classification**: Creating prompts that reliably identify document types (W-2, 1099, Invoice)
+- **Entity extraction**: Extracting structured data like SSNs, amounts, dates
+
+**Iterative prompt refinement example:**
+```
+Initial: "Extract text from this document"
+Final: "You are a document OCR expert. Extract ALL text from this tax document.
+        Classify as W-2, 1099-MISC, 1099-NEC, Invoice, or Other.
+        Return JSON with raw_text, document_type, confidence, and extracted_data."
+```
+
+### 5. Documentation & Diagrams
+
+AI significantly reduced documentation time:
+
+- Generated ASCII workflow diagrams from descriptions
+- Created OpenAPI/Swagger specifications from endpoint descriptions
+- Wrote initial README drafts that I then customized
+- Produced the WeWeb integration guide
+
+### 6. Debugging & Troubleshooting
+
+When issues arose, AI helped:
+
+- Analyze error logs and suggest root causes
+- Debug OpenAI connection timeouts in serverless environments
+- Fix MIME type detection issues for base64 uploads
+- Resolve pgvector query performance problems
+
+### What AI Didn't Do
+
+To be clear, AI was a tool, not a replacement for engineering decisions:
+
+- **Architecture decisions** were made by me based on requirements
+- **Security implementation** was carefully reviewed and tested manually
+- **Business logic** for tax document processing was designed with domain knowledge
+- **Testing and validation** was done manually with real documents
+- **WeWeb UI/UX** was designed and built in the visual editor
+- **Production debugging** required human judgment and system understanding
+
+---
+
+## Submission Contents
+
+| Part | Description | Key Files |
+|------|-------------|-----------|
+| **Part 1** | Core document/audio/text processing | N8N workflows, Supabase schema |
+| **Part 2** | Error handling & optimization | DLQ workflow, indexes, RLS |
+| **Part 3** | Distributed AI workflows | Architecture diagrams, API docs |
+| **Part 4** | Node.js API (RAG/KAG) | Source code, OpenAPI spec |
+| **Part 5** | WeWeb client portal | Screenshots, integration guide |
+
+---
 
 ## Security
 
-- Row Level Security (RLS) enabled on all tables
-- JWT authentication for API
-- API key authentication for webhooks
-- Sensitive data masking (SSN, Tax ID)
-- Rate limiting on all endpoints
-- Audit logging for compliance
+- **Authentication**: Supabase Auth + JWT tokens
+- **Authorization**: Row Level Security (RLS) on all tables
+- **Rate Limiting**: Redis-based sliding window (50 req/min)
+- **Data Masking**: SSNs and TINs automatically masked (***-**-1234)
+- **API Keys**: Secure webhook authentication
 
-## Monitoring
+### Time Spent
 
-### Metrics Tracked
-- Document processing success/failure rates
-- Average processing time
-- Queue lengths
-- Worker performance
-- Error rates by type
-
-### Alerts
-- Critical errors → Slack + Email
-- Warnings → Slack
-- Info → Database only
-
-## Support
-
-For issues and feature requests, please create a GitHub issue.
+| 01/28 | 01/29 | 01/30 | 02/01 |
+| 6 hours | 7 hours | 8 hours | 10 hours |
+|------|-----------|---------|---------|
+| **Total** | **31 hours** |
+---
 
 ## License
 
 MIT
+
+---
+
+## Author
+
+Gustavo Ferraz
+
+Built with Node.js, N8N, Supabase, OpenAI, and WeWeb.

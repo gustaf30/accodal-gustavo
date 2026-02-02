@@ -1,0 +1,186 @@
+{
+  "name": "Error Handler & DLQ",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "error-handler",
+        "options": {}
+      },
+      "id": "error-webhook",
+      "name": "Error Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Parse error details\nconst error = $input.first().json;\nconst retryCount = error.retry_count || 0;\nconst maxRetries = 3;\n\n// Calculate exponential backoff delay\nconst backoffMs = Math.min(1000 * Math.pow(2, retryCount), 30000);\n\nreturn {\n  json: {\n    ...error,\n    retry_count: retryCount,\n    max_retries: maxRetries,\n    should_retry: retryCount < maxRetries,\n    backoff_ms: backoffMs,\n    error_id: $runId,\n    timestamp: new Date().toISOString()\n  }\n};"
+      },
+      "id": "prepare-error",
+      "name": "Prepare Error",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.should_retry }}",
+              "operation": "equal",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "should-retry",
+      "name": "Should Retry?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "amount": "={{ $json.backoff_ms }}",
+        "unit": "milliseconds"
+      },
+      "id": "wait-backoff",
+      "name": "Wait (Exponential Backoff)",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1,
+      "position": [850, 200]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.N8N_WEBHOOK_URL }}/webhook/orchestrate",
+        "method": "POST",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "task_type",
+              "value": "={{ $json.task_type }}"
+            },
+            {
+              "name": "priority",
+              "value": "={{ $json.priority || 1 }}"
+            },
+            {
+              "name": "payload",
+              "value": "={{ $json.original_payload }}"
+            },
+            {
+              "name": "retry_count",
+              "value": "={{ $json.retry_count + 1 }}"
+            }
+          ]
+        }
+      },
+      "id": "retry-task",
+      "name": "Retry Task",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1050, 200]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "tableId": "dead_letter_queue",
+        "dataToSend": "defineBelow",
+        "fieldsUi": {
+          "fieldValues": [
+            { "fieldName": "error_id", "fieldValue": "={{ $json.error_id }}" },
+            { "fieldName": "task_type", "fieldValue": "={{ $json.task_type }}" },
+            { "fieldName": "payload", "fieldValue": "={{ $json.original_payload }}" },
+            { "fieldName": "error_message", "fieldValue": "={{ $json.error_message }}" },
+            { "fieldName": "retry_count", "fieldValue": "={{ $json.retry_count }}" },
+            { "fieldName": "status", "fieldValue": "failed" }
+          ]
+        }
+      },
+      "id": "save-to-dlq",
+      "name": "Save to DLQ",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [850, 400],
+      "credentials": {
+        "supabaseApi": {
+          "id": "supabase-credentials-id",
+          "name": "Supabase API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "tableId": "error_notifications",
+        "dataToSend": "defineBelow",
+        "fieldsUi": {
+          "fieldValues": [
+            { "fieldName": "message", "fieldValue": "={{ $json.error_message }}" },
+            { "fieldName": "details", "fieldValue": "={{ { task_type: $json.task_type, retry_count: $json.retry_count, payload: $json.original_payload } }}" },
+            { "fieldName": "severity", "fieldValue": "critical" }
+          ]
+        }
+      },
+      "id": "log-error",
+      "name": "Log Error",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [1050, 400],
+      "credentials": {
+        "supabaseApi": {
+          "id": "supabase-credentials-id",
+          "name": "Supabase API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "channel": "#tax-processing-alerts",
+        "text": ":warning: *Tax Processing Failed*\n\n*Task Type:* {{ $json.task_type }}\n*Error:* {{ $json.error_message }}\n*Retries:* {{ $json.retry_count }}/3\n*ID:* {{ $json.error_id }}",
+        "otherOptions": {}
+      },
+      "id": "slack-alert",
+      "name": "Slack Alert",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.1,
+      "position": [1250, 400],
+      "credentials": {
+        "slackApi": {
+          "id": "slack-credentials-id",
+          "name": "Slack API"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Error Webhook": {
+      "main": [[{ "node": "Prepare Error", "type": "main", "index": 0 }]]
+    },
+    "Prepare Error": {
+      "main": [[{ "node": "Should Retry?", "type": "main", "index": 0 }]]
+    },
+    "Should Retry?": {
+      "main": [
+        [{ "node": "Wait (Exponential Backoff)", "type": "main", "index": 0 }],
+        [{ "node": "Save to DLQ", "type": "main", "index": 0 }]
+      ]
+    },
+    "Wait (Exponential Backoff)": {
+      "main": [[{ "node": "Retry Task", "type": "main", "index": 0 }]]
+    },
+    "Save to DLQ": {
+      "main": [[{ "node": "Log Error", "type": "main", "index": 0 }]]
+    },
+    "Log Error": {
+      "main": [[{ "node": "Slack Alert", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": ["error-handling", "dlq", "retry"],
+  "pinData": {},
+  "staticData": null
+}

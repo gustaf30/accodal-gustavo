@@ -1,0 +1,207 @@
+{
+  "name": "Document Worker",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "execute-workflow-trigger",
+      "name": "Execute Workflow Trigger",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Extract file info from payload\nconst payload = $input.first().json.payload;\nconst filename = payload.filename;\nconst fileUrl = payload.file_url;\nconst mimeType = payload.mime_type || 'image/png';\n\n// Validate required fields\nif (!filename || !fileUrl) {\n  throw new Error('Missing required fields: filename or file_url');\n}\n\n// Determine if it's an image or PDF\nconst isImage = mimeType.startsWith('image/');\nconst isPdf = mimeType === 'application/pdf';\n\nreturn {\n  json: {\n    ...payload,\n    filename,\n    file_url: fileUrl,\n    mime_type: mimeType,\n    is_image: isImage,\n    is_pdf: isPdf\n  }\n};"
+      },
+      "id": "prepare-document",
+      "name": "Prepare Document",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.file_url }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "id": "download-file",
+      "name": "Download File",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "resource": "image",
+        "operation": "analyze",
+        "modelId": "gpt-4o",
+        "text": "You are a document OCR and data extraction expert. Extract ALL text from this document image.\n\nProvide:\n1. The complete raw text as it appears\n2. Document type classification (W-2, 1099-MISC, 1099-NEC, 1099-INT, Invoice, Receipt, Contract, Other)\n3. Structured data extraction based on document type\n\nFor tax forms, extract: names, addresses, TINs (mask as ***-**-XXXX), amounts, dates\nFor invoices: company, items, amounts, dates, totals\n\nRespond in JSON format:\n{\n  \"raw_text\": \"...\",\n  \"document_type\": \"...\",\n  \"confidence\": 0.95,\n  \"extracted_data\": {...}\n}",
+        "inputType": "base64",
+        "binaryPropertyName": "data",
+        "options": {
+          "maxTokens": 4096
+        }
+      },
+      "id": "openai-vision-ocr",
+      "name": "OpenAI Vision OCR",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.4,
+      "position": [850, 300],
+      "credentials": {
+        "openAiApi": {
+          "id": "openai-credentials-id",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "functionCode": "// Parse OCR response and prepare for storage\nconst ocrResult = $input.first().json;\nconst inputData = $('Prepare Document').first().json;\n\nlet parsed;\ntry {\n  // Extract JSON from response\n  const content = ocrResult.message?.content || ocrResult.text || JSON.stringify(ocrResult);\n  const jsonMatch = content.match(/\\{[\\s\\S]*\\}/);\n  if (jsonMatch) {\n    parsed = JSON.parse(jsonMatch[0]);\n  } else {\n    parsed = { raw_text: content, document_type: 'Unknown', confidence: 0.5 };\n  }\n} catch (e) {\n  parsed = { raw_text: String(ocrResult), document_type: 'Unknown', confidence: 0.5 };\n}\n\nreturn {\n  json: {\n    document_id: inputData.document_id,\n    user_id: inputData.user_id,\n    filename: inputData.filename,\n    file_url: inputData.file_url,\n    mime_type: inputData.mime_type,\n    raw_text: parsed.raw_text,\n    document_type: parsed.document_type,\n    extracted_data: parsed.extracted_data || {},\n    ocr_confidence: parsed.confidence || 0.92,\n    classification_confidence: 0.95,\n    status: 'completed'\n  }\n};"
+      },
+      "id": "parse-ocr-result",
+      "name": "Parse OCR Result",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [1050, 300]
+    },
+    {
+      "parameters": {
+        "resource": "embedding",
+        "model": "text-embedding-3-small",
+        "text": "={{ $json.raw_text }}\\n\\nExtracted Data:\\n{{ JSON.stringify($json.extracted_data, null, 2) }}",
+        "options": {
+          "dimensions": 1536
+        }
+      },
+      "id": "generate-embedding",
+      "name": "Generate Embedding",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.4,
+      "position": [1250, 300],
+      "credentials": {
+        "openAiApi": {
+          "id": "openai-credentials-id",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "upsert",
+        "tableId": "documents",
+        "dataToSend": "defineBelow",
+        "fieldsUi": {
+          "fieldValues": [
+            { "fieldName": "id", "fieldValue": "={{ $('Parse OCR Result').first().json.document_id }}" },
+            { "fieldName": "user_id", "fieldValue": "={{ $('Parse OCR Result').first().json.user_id }}" },
+            { "fieldName": "filename", "fieldValue": "={{ $('Parse OCR Result').first().json.filename }}" },
+            { "fieldName": "file_url", "fieldValue": "={{ $('Parse OCR Result').first().json.file_url }}" },
+            { "fieldName": "mime_type", "fieldValue": "={{ $('Parse OCR Result').first().json.mime_type }}" },
+            { "fieldName": "type", "fieldValue": "={{ $('Parse OCR Result').first().json.document_type }}" },
+            { "fieldName": "raw_text", "fieldValue": "={{ $('Parse OCR Result').first().json.raw_text }}" },
+            { "fieldName": "extracted_data", "fieldValue": "={{ $('Parse OCR Result').first().json.extracted_data }}" },
+            { "fieldName": "ocr_confidence", "fieldValue": "={{ $('Parse OCR Result').first().json.ocr_confidence }}" },
+            { "fieldName": "classification_confidence", "fieldValue": "={{ $('Parse OCR Result').first().json.classification_confidence }}" },
+            { "fieldName": "status", "fieldValue": "completed" },
+            { "fieldName": "processed_at", "fieldValue": "={{ new Date().toISOString() }}" }
+          ]
+        }
+      },
+      "id": "save-to-documents",
+      "name": "Save to Documents",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [1450, 200],
+      "credentials": {
+        "supabaseApi": {
+          "id": "supabase-credentials-id",
+          "name": "Supabase API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "tableId": "document_embeddings",
+        "dataToSend": "defineBelow",
+        "fieldsUi": {
+          "fieldValues": [
+            { "fieldName": "document_id", "fieldValue": "={{ $('Parse OCR Result').first().json.document_id }}" },
+            { "fieldName": "content", "fieldValue": "={{ $('Parse OCR Result').first().json.raw_text }}\\n\\nExtracted Data:\\n{{ JSON.stringify($('Parse OCR Result').first().json.extracted_data) }}" },
+            { "fieldName": "embedding", "fieldValue": "={{ $json.embedding }}" },
+            { "fieldName": "chunk_index", "fieldValue": 0 }
+          ]
+        }
+      },
+      "id": "save-embedding",
+      "name": "Save Embedding",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [1450, 400],
+      "credentials": {
+        "supabaseApi": {
+          "id": "supabase-credentials-id",
+          "name": "Supabase API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            { "name": "success", "value": "true" },
+            { "name": "document_id", "value": "={{ $('Parse OCR Result').first().json.document_id }}" },
+            { "name": "type", "value": "={{ $('Parse OCR Result').first().json.document_type }}" },
+            { "name": "status", "value": "completed" }
+          ]
+        }
+      },
+      "id": "set-success-response",
+      "name": "Set Success Response",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [1650, 300]
+    }
+  ],
+  "connections": {
+    "Execute Workflow Trigger": {
+      "main": [[{ "node": "Prepare Document", "type": "main", "index": 0 }]]
+    },
+    "Prepare Document": {
+      "main": [[{ "node": "Download File", "type": "main", "index": 0 }]]
+    },
+    "Download File": {
+      "main": [[{ "node": "OpenAI Vision OCR", "type": "main", "index": 0 }]]
+    },
+    "OpenAI Vision OCR": {
+      "main": [[{ "node": "Parse OCR Result", "type": "main", "index": 0 }]]
+    },
+    "Parse OCR Result": {
+      "main": [[{ "node": "Generate Embedding", "type": "main", "index": 0 }]]
+    },
+    "Generate Embedding": {
+      "main": [
+        [
+          { "node": "Save to Documents", "type": "main", "index": 0 },
+          { "node": "Save Embedding", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Save to Documents": {
+      "main": [[{ "node": "Set Success Response", "type": "main", "index": 0 }]]
+    },
+    "Save Embedding": {
+      "main": [[{ "node": "Set Success Response", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": ["worker", "document", "ocr"],
+  "pinData": {},
+  "staticData": null
+}

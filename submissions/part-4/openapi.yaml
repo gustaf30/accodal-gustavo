@@ -1,0 +1,889 @@
+openapi: 3.0.3
+info:
+  title: Tax Document Processing API
+  description: |
+    A comprehensive API for processing tax documents, audio transcriptions, and text extractions.
+
+    ## Features
+    - **RAG Search**: Semantic search using pgvector embeddings
+    - **KAG Classification**: AI-powered document classification
+    - **Batch Processing**: Process multiple items with priority queue
+    - **Audio Transcription**: Whisper AI for speech-to-text
+
+    ## Authentication
+    The API supports two authentication methods:
+    - **Bearer Token**: Supabase JWT token for user authentication
+    - **API Key**: X-API-Key header for service-to-service communication
+  version: 1.0.0
+  contact:
+    name: API Support
+    email: support@accodal.com
+
+servers:
+  - url: https://accodal-gustavo.vercel.app/api/v1
+    description: Production server
+  - url: http://localhost:3000/api/v1
+    description: Development server
+
+tags:
+  - name: Health
+    description: System health endpoints
+  - name: Search
+    description: Semantic search (RAG) endpoints
+  - name: Classification
+    description: Document classification (KAG) endpoints
+  - name: Documents
+    description: Document management
+  - name: Batch
+    description: Batch processing
+  - name: Audio
+    description: Audio transcription
+  - name: Text
+    description: Text extraction
+  - name: Statistics
+    description: Processing statistics
+
+paths:
+  /health:
+    get:
+      tags:
+        - Health
+      summary: Health check
+      description: Check if the API is running
+      responses:
+        '200':
+          description: API is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: healthy
+                  timestamp:
+                    type: string
+                    format: date-time
+                  version:
+                    type: string
+                    example: "1.0.0"
+
+  /search:
+    post:
+      tags:
+        - Search
+      summary: Semantic search
+      description: Search documents using semantic similarity (RAG)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - query
+              properties:
+                query:
+                  type: string
+                  description: Search query text
+                  example: "W-2 wage information"
+                threshold:
+                  type: number
+                  minimum: 0
+                  maximum: 1
+                  default: 0.3
+                  description: Minimum similarity threshold
+                limit:
+                  type: integer
+                  minimum: 1
+                  maximum: 100
+                  default: 10
+                  description: Maximum results to return
+      responses:
+        '200':
+          description: Search results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchResponse'
+    get:
+      tags:
+        - Search
+      summary: Semantic search (GET)
+      description: Search documents using query parameters
+      parameters:
+        - name: query
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: threshold
+          in: query
+          schema:
+            type: number
+            default: 0.3
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 10
+      responses:
+        '200':
+          description: Search results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchResponse'
+
+  /documents/{documentId}/similar:
+    get:
+      tags:
+        - Search
+      summary: Find similar documents
+      description: Find documents similar to a given document
+      parameters:
+        - name: documentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 5
+      responses:
+        '200':
+          description: Similar documents
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SimilarDocumentsResponse'
+
+  /documents/{documentId}/inconsistencies:
+    get:
+      tags:
+        - Search
+      summary: Check inconsistencies
+      description: Flag inconsistencies compared to similar historical documents
+      parameters:
+        - name: documentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Inconsistency check results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InconsistencyResponse'
+
+  /classify:
+    post:
+      tags:
+        - Classification
+      summary: Classify document
+      description: Classify a document using AI (KAG)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - content
+                - content_type
+              properties:
+                content:
+                  type: string
+                  description: Document content (text, base64, or URL)
+                content_type:
+                  type: string
+                  enum: [text, base64_image, url]
+                filename:
+                  type: string
+                  description: Original filename (for base64/URL)
+      responses:
+        '200':
+          description: Classification result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClassificationResponse'
+
+  /classify/batch:
+    post:
+      tags:
+        - Classification
+      summary: Batch classification
+      description: Classify multiple documents at once
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - items
+              properties:
+                items:
+                  type: array
+                  maxItems: 20
+                  items:
+                    type: object
+                    properties:
+                      content:
+                        type: string
+                      content_type:
+                        type: string
+                        enum: [text, base64_image, url]
+      responses:
+        '200':
+          description: Batch classification results
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      results:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/ClassificationResult'
+
+  /taxonomy/build:
+    post:
+      tags:
+        - Classification
+      summary: Build taxonomy
+      description: Build or update document taxonomy mapping
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - document_type
+                - extracted_data
+              properties:
+                document_type:
+                  type: string
+                extracted_data:
+                  type: object
+      responses:
+        '200':
+          description: Taxonomy result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaxonomyResponse'
+
+  /documents:
+    get:
+      tags:
+        - Documents
+      summary: List documents
+      description: Get a paginated list of documents
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [pending, processing, completed, failed]
+        - name: type
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Document list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentListResponse'
+
+  /documents/{id}:
+    get:
+      tags:
+        - Documents
+      summary: Get document
+      description: Get a single document by ID
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Document details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentResponse'
+        '404':
+          description: Document not found
+    delete:
+      tags:
+        - Documents
+      summary: Delete document
+      description: Delete a document and its embeddings
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Document deleted
+        '404':
+          description: Document not found
+
+  /documents/{id}/reprocess:
+    post:
+      tags:
+        - Documents
+      summary: Reprocess document
+      description: Trigger reprocessing of a document
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Reprocessing started
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentResponse'
+
+  /batch/process:
+    post:
+      tags:
+        - Batch
+      summary: Create batch job
+      description: Submit multiple items for batch processing
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - items
+              properties:
+                items:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      type:
+                        type: string
+                        enum: [document, audio, text]
+                      data:
+                        type: object
+                priority:
+                  type: string
+                  enum: [high, normal, low]
+                  default: normal
+      responses:
+        '200':
+          description: Batch job created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchJobResponse'
+
+  /batch/jobs/{jobId}:
+    get:
+      tags:
+        - Batch
+      summary: Get job status
+      description: Get the status of a batch job
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Job status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobStatusResponse'
+
+  /upload/base64:
+    post:
+      tags:
+        - Documents
+      summary: Upload via base64
+      description: Upload a document using base64 encoding
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - filename
+                - base64_content
+              properties:
+                filename:
+                  type: string
+                base64_content:
+                  type: string
+                mime_type:
+                  type: string
+      responses:
+        '200':
+          description: Upload successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadResponse'
+
+  /audio:
+    get:
+      tags:
+        - Audio
+      summary: List audio transcriptions
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        '200':
+          description: Audio list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AudioListResponse'
+
+  /audio/{id}:
+    get:
+      tags:
+        - Audio
+      summary: Get audio transcription
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Audio details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AudioResponse'
+
+  /text:
+    get:
+      tags:
+        - Text
+      summary: List text extractions
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Text list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TextListResponse'
+
+  /stats:
+    get:
+      tags:
+        - Statistics
+      summary: Get processing statistics
+      description: Get document, audio, text, and queue statistics
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Statistics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatsResponse'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    apiKey:
+      type: apiKey
+      in: header
+      name: X-API-Key
+
+  schemas:
+    SearchResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            results:
+              type: array
+              items:
+                $ref: '#/components/schemas/SearchResult'
+            total:
+              type: integer
+            query:
+              type: string
+            threshold:
+              type: number
+
+    SearchResult:
+      type: object
+      properties:
+        document_id:
+          type: string
+          format: uuid
+        content:
+          type: string
+        similarity:
+          type: number
+        document:
+          $ref: '#/components/schemas/Document'
+
+    SimilarDocumentsResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            document_id:
+              type: string
+            similar:
+              type: array
+              items:
+                $ref: '#/components/schemas/SearchResult'
+
+    InconsistencyResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            document_id:
+              type: string
+            has_inconsistencies:
+              type: boolean
+            inconsistencies:
+              type: array
+              items:
+                type: object
+                properties:
+                  field:
+                    type: string
+                  current_value:
+                    type: string
+                  expected_range:
+                    type: string
+                  severity:
+                    type: string
+                    enum: [low, medium, high]
+
+    ClassificationResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          $ref: '#/components/schemas/ClassificationResult'
+
+    ClassificationResult:
+      type: object
+      properties:
+        document_type:
+          type: string
+        confidence:
+          type: number
+        category:
+          type: string
+        subcategory:
+          type: string
+        keywords:
+          type: array
+          items:
+            type: string
+        extracted_fields:
+          type: object
+
+    TaxonomyResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            taxonomy_id:
+              type: string
+              format: uuid
+            document_type:
+              type: string
+            category:
+              type: string
+            mapped_fields:
+              type: object
+
+    Document:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        filename:
+          type: string
+        file_url:
+          type: string
+        mime_type:
+          type: string
+        type:
+          type: string
+        raw_text:
+          type: string
+        extracted_data:
+          type: object
+        ocr_confidence:
+          type: number
+        classification_confidence:
+          type: number
+        status:
+          type: string
+          enum: [pending, processing, completed, failed]
+        created_at:
+          type: string
+          format: date-time
+
+    DocumentListResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            documents:
+              type: array
+              items:
+                $ref: '#/components/schemas/Document'
+            total:
+              type: integer
+            limit:
+              type: integer
+            offset:
+              type: integer
+
+    DocumentResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          $ref: '#/components/schemas/Document'
+
+    BatchJobResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            job_id:
+              type: string
+              format: uuid
+            total_items:
+              type: integer
+            status:
+              type: string
+            queue_source:
+              type: string
+              enum: [redis, n8n, supabase]
+
+    JobStatusResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            job_id:
+              type: string
+            status:
+              type: string
+            total_items:
+              type: integer
+            processed_items:
+              type: integer
+            failed_items:
+              type: integer
+            results:
+              type: array
+              items:
+                type: object
+
+    UploadResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            job_id:
+              type: string
+            filename:
+              type: string
+            file_url:
+              type: string
+            status:
+              type: string
+
+    AudioResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            id:
+              type: string
+            filename:
+              type: string
+            transcribed_text:
+              type: string
+            duration_seconds:
+              type: integer
+            extracted_entities:
+              type: object
+            status:
+              type: string
+
+    AudioListResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            transcriptions:
+              type: array
+              items:
+                $ref: '#/components/schemas/AudioResponse'
+
+    TextListResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            extractions:
+              type: array
+              items:
+                type: object
+
+    StatsResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            documents:
+              type: object
+              properties:
+                total:
+                  type: integer
+                by_status:
+                  type: object
+                by_type:
+                  type: object
+            audio:
+              type: object
+            text:
+              type: object
+            queue:
+              type: object
+              properties:
+                pending:
+                  type: integer
+                processing:
+                  type: integer
+                completed:
+                  type: integer
+                failed:
+                  type: integer
+                dlqSize:
+                  type: integer

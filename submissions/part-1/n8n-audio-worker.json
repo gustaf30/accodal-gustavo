@@ -1,0 +1,179 @@
+{
+  "name": "Audio Worker",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "execute-workflow-trigger",
+      "name": "Execute Workflow Trigger",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Extract audio file info from payload\nconst payload = $input.first().json.payload;\nconst filename = payload.filename;\nconst fileUrl = payload.file_url;\nconst mimeType = payload.mime_type || 'audio/mpeg';\n\nif (!filename || !fileUrl) {\n  throw new Error('Missing required fields: filename or file_url');\n}\n\nreturn {\n  json: {\n    ...payload,\n    filename,\n    file_url: fileUrl,\n    mime_type: mimeType\n  }\n};"
+      },
+      "id": "prepare-audio",
+      "name": "Prepare Audio",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.file_url }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "id": "download-audio",
+      "name": "Download Audio",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "resource": "audio",
+        "operation": "transcribe",
+        "model": "whisper-1",
+        "binaryPropertyName": "data",
+        "options": {
+          "language": "en",
+          "response_format": "verbose_json"
+        }
+      },
+      "id": "whisper-transcription",
+      "name": "Whisper Transcription",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.4,
+      "position": [850, 300],
+      "credentials": {
+        "openAiApi": {
+          "id": "openai-credentials-id",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": "gpt-4o-mini",
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "You are a financial data extraction expert. Analyze the transcription and extract any financial entities mentioned.\n\nExtract:\n- SSNs (mask as ***-**-XXXX)\n- Tax IDs / EINs\n- Income figures and amounts\n- Dates mentioned\n- Company names\n- Person names\n- Tax-related keywords\n\nRespond in JSON format:\n{\n  \"entities\": {\n    \"ssns\": [\"***-**-1234\"],\n    \"tax_ids\": [],\n    \"amounts\": [{\"value\": 50000, \"context\": \"annual income\"}],\n    \"dates\": [],\n    \"companies\": [],\n    \"persons\": [],\n    \"keywords\": []\n  },\n  \"summary\": \"Brief summary of the conversation\",\n  \"tax_relevance\": 0.8\n}"
+            },
+            {
+              "role": "user",
+              "content": "={{ $json.text }}"
+            }
+          ]
+        },
+        "options": {
+          "maxTokens": 2048
+        }
+      },
+      "id": "extract-entities",
+      "name": "Extract Financial Entities",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.4,
+      "position": [1050, 300],
+      "credentials": {
+        "openAiApi": {
+          "id": "openai-credentials-id",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "functionCode": "const whisperResult = $('Whisper Transcription').first().json;\nconst entitiesResult = $input.first().json;\nconst inputData = $('Prepare Audio').first().json;\n\nlet entities = {};\ntry {\n  const content = entitiesResult.message?.content || entitiesResult.text || '{}';\n  const jsonMatch = content.match(/\\{[\\s\\S]*\\}/);\n  if (jsonMatch) {\n    entities = JSON.parse(jsonMatch[0]);\n  }\n} catch (e) {\n  entities = { error: 'Failed to parse entities' };\n}\n\nreturn {\n  json: {\n    transcription_id: inputData.transcription_id || $runId,\n    user_id: inputData.user_id,\n    filename: inputData.filename,\n    file_url: inputData.file_url,\n    transcribed_text: whisperResult.text,\n    duration_seconds: whisperResult.duration,\n    language: whisperResult.language || 'en',\n    extracted_entities: entities.entities || {},\n    summary: entities.summary || '',\n    tax_relevance: entities.tax_relevance || 0,\n    status: 'completed'\n  }\n};"
+      },
+      "id": "parse-results",
+      "name": "Parse Results",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [1250, 300]
+    },
+    {
+      "parameters": {
+        "operation": "upsert",
+        "tableId": "audio_transcriptions",
+        "dataToSend": "defineBelow",
+        "fieldsUi": {
+          "fieldValues": [
+            { "fieldName": "id", "fieldValue": "={{ $json.transcription_id }}" },
+            { "fieldName": "user_id", "fieldValue": "={{ $json.user_id }}" },
+            { "fieldName": "filename", "fieldValue": "={{ $json.filename }}" },
+            { "fieldName": "file_url", "fieldValue": "={{ $json.file_url }}" },
+            { "fieldName": "transcribed_text", "fieldValue": "={{ $json.transcribed_text }}" },
+            { "fieldName": "duration_seconds", "fieldValue": "={{ $json.duration_seconds }}" },
+            { "fieldName": "language", "fieldValue": "={{ $json.language }}" },
+            { "fieldName": "extracted_entities", "fieldValue": "={{ $json.extracted_entities }}" },
+            { "fieldName": "status", "fieldValue": "completed" },
+            { "fieldName": "processed_at", "fieldValue": "={{ new Date().toISOString() }}" }
+          ]
+        }
+      },
+      "id": "save-transcription",
+      "name": "Save Transcription",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [1450, 300],
+      "credentials": {
+        "supabaseApi": {
+          "id": "supabase-credentials-id",
+          "name": "Supabase API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            { "name": "success", "value": "true" },
+            { "name": "transcription_id", "value": "={{ $json.transcription_id }}" },
+            { "name": "status", "value": "completed" }
+          ]
+        }
+      },
+      "id": "set-success",
+      "name": "Set Success",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [1650, 300]
+    }
+  ],
+  "connections": {
+    "Execute Workflow Trigger": {
+      "main": [[{ "node": "Prepare Audio", "type": "main", "index": 0 }]]
+    },
+    "Prepare Audio": {
+      "main": [[{ "node": "Download Audio", "type": "main", "index": 0 }]]
+    },
+    "Download Audio": {
+      "main": [[{ "node": "Whisper Transcription", "type": "main", "index": 0 }]]
+    },
+    "Whisper Transcription": {
+      "main": [[{ "node": "Extract Financial Entities", "type": "main", "index": 0 }]]
+    },
+    "Extract Financial Entities": {
+      "main": [[{ "node": "Parse Results", "type": "main", "index": 0 }]]
+    },
+    "Parse Results": {
+      "main": [[{ "node": "Save Transcription", "type": "main", "index": 0 }]]
+    },
+    "Save Transcription": {
+      "main": [[{ "node": "Set Success", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": ["worker", "audio", "transcription"],
+  "pinData": {},
+  "staticData": null
+}
